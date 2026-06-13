@@ -1,0 +1,18 @@
+{
+    "files.associations": {
+        "app_motor.h": "c",
+        "main.h": "c",
+        "resource.h": "c",
+        "y_encoder.h": "c",
+        "y_flash.h": "c",
+        "y_soft_i2c.h": "c",
+        "ltr381.h": "c",
+        "app_sensor.h": "c",
+        "y_beep.h": "c",
+        "y_kinematics.h": "c",
+        "ultrasonic.h": "c",
+        "y_global.h": "c",
+        "us01.h": "c",
+        "stm32f10x.h": "c"
+    }
+}
