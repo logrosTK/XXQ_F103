@@ -25,5 +25,5 @@ void y_timer_tick(void)
 
 u32 millis(void)
 {
-    return systick_ms;
+    return HAL_GetTick();
 }

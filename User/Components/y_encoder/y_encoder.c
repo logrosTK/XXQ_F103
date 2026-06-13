@@ -8,7 +8,7 @@ static void encoder_gpio_init(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_AFIO_REMAP_SWJ_NOJTAG();
-    __HAL_AFIO_REMAP_TIM2_PARTIAL_1();
+    __HAL_AFIO_REMAP_TIM2_ENABLE();
 
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -92,7 +92,7 @@ int16_t ENCODER_D_GetCounter(void)
 void Encoder_Init(void)
 {
     __HAL_RCC_AFIO_CLK_ENABLE();
-    __HAL_AFIO_REMAP_TIM2_PARTIAL_1();
+    __HAL_AFIO_REMAP_TIM2_ENABLE();
     encoder_gpio_init();
 
     htim2.Instance = TIM2;

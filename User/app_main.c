@@ -2,9 +2,10 @@
 #include "user_main.h"
 
 #define MOTOR_TEST_PWM 250
-#define KEY_ACTIVE_LEVEL 1U
+#define KEY_ACTIVE_LEVEL 0U
 #define KEY_DEBOUNCE_MS 30U
 #define ENCODER_DEBUG_PERIOD_MS 500U
+#define ENCODER_REG_DEBUG_PERIOD_MS 2000U
 
 // A=left-front, B=right-front, C=right-rear, D=left-rear.
 // Flip the sign of one macro if that wheel runs backward.
@@ -14,6 +15,89 @@
 #define MOTOR_D_FORWARD_PWM  (MOTOR_TEST_PWM)
 
 static uint8_t motor_test_enabled = 0;
+
+static uint8_t pin_level(GPIO_TypeDef *port, uint16_t pin)
+{
+    return (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) ? 1U : 0U;
+}
+
+static uint8_t encoder_pair_level(GPIO_TypeDef *port1,
+                                  uint16_t pin1,
+                                  GPIO_TypeDef *port2,
+                                  uint16_t pin2)
+{
+    return (uint8_t)((pin_level(port1, pin1) << 1) | pin_level(port2, pin2));
+}
+
+static uint8_t encoder_pair_a(void)
+{
+    return encoder_pair_level(GPIOA, GPIO_PIN_0, GPIOA, GPIO_PIN_1);
+}
+
+static uint8_t encoder_pair_b(void)
+{
+    return encoder_pair_level(GPIOB, GPIO_PIN_6, GPIOB, GPIO_PIN_7);
+}
+
+static uint8_t encoder_pair_c(void)
+{
+    return encoder_pair_level(GPIOA, GPIO_PIN_6, GPIOA, GPIO_PIN_7);
+}
+
+static uint8_t encoder_pair_d(void)
+{
+    return encoder_pair_level(GPIOA, GPIO_PIN_15, GPIOB, GPIO_PIN_3);
+}
+
+static void encoder_gpio_config_pull(uint32_t pull)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = pull;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+
+    GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_15;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_3 | GPIO_PIN_6 | GPIO_PIN_7;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+}
+
+static void encoder_input_diag_once(void)
+{
+    uint8_t float_a = encoder_pair_a();
+    uint8_t float_b = encoder_pair_b();
+    uint8_t float_c = encoder_pair_c();
+    uint8_t float_d = encoder_pair_d();
+
+    encoder_gpio_config_pull(GPIO_PULLDOWN);
+    HAL_Delay(5);
+
+    uint8_t pulldown_a = encoder_pair_a();
+    uint8_t pulldown_b = encoder_pair_b();
+    uint8_t pulldown_c = encoder_pair_c();
+    uint8_t pulldown_d = encoder_pair_d();
+
+    encoder_gpio_config_pull(GPIO_NOPULL);
+
+    printf("ENC_PIN_TEST float[A,B,C,D]=[%u,%u,%u,%u] pulldown[A,B,C,D]=[%u,%u,%u,%u] "
+           "GPIOA_IDR=%04lX GPIOB_IDR=%04lX AFIO_MAPR=%08lX\r\n",
+           float_a,
+           float_b,
+           float_c,
+           float_d,
+           pulldown_a,
+           pulldown_b,
+           pulldown_c,
+           pulldown_d,
+           (unsigned long)(GPIOA->IDR & 0xFFFFU),
+           (unsigned long)(GPIOB->IDR & 0xFFFFU),
+           (unsigned long)AFIO->MAPR);
+}
 
 static void motor_test_stop(void)
 {
@@ -108,14 +192,49 @@ static void encoder_debug_run(void)
            enc_b,
            enc_c,
            enc_d,
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET,
-           HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_SET);
+           pin_level(GPIOA, GPIO_PIN_0),
+           pin_level(GPIOA, GPIO_PIN_1),
+           pin_level(GPIOB, GPIO_PIN_6),
+           pin_level(GPIOB, GPIO_PIN_7),
+           pin_level(GPIOA, GPIO_PIN_6),
+           pin_level(GPIOA, GPIO_PIN_7),
+           pin_level(GPIOA, GPIO_PIN_15),
+           pin_level(GPIOB, GPIO_PIN_3));
+}
+
+static void encoder_reg_debug_run(void)
+{
+    static u32 last_print_ms = 0;
+    u32 now = millis();
+
+    if ((now - last_print_ms) < ENCODER_REG_DEBUG_PERIOD_MS)
+    {
+        return;
+    }
+    last_print_ms = now;
+
+    printf("ENC_REG GPIOA_IDR=%04lX GPIOB_IDR=%04lX MAPR=%08lX "
+           "CNT[T5,T4,T3,T2]=[%ld,%ld,%ld,%ld] "
+           "CR1=[%04lX,%04lX,%04lX,%04lX] SMCR=[%04lX,%04lX,%04lX,%04lX] CCER=[%04lX,%04lX,%04lX,%04lX]\r\n",
+           (unsigned long)(GPIOA->IDR & 0xFFFFU),
+           (unsigned long)(GPIOB->IDR & 0xFFFFU),
+           (unsigned long)AFIO->MAPR,
+           (long)(int16_t)TIM5->CNT,
+           (long)(int16_t)TIM4->CNT,
+           (long)(int16_t)TIM3->CNT,
+           (long)(int16_t)TIM2->CNT,
+           (unsigned long)TIM5->CR1,
+           (unsigned long)TIM4->CR1,
+           (unsigned long)TIM3->CR1,
+           (unsigned long)TIM2->CR1,
+           (unsigned long)TIM5->SMCR,
+           (unsigned long)TIM4->SMCR,
+           (unsigned long)TIM3->SMCR,
+           (unsigned long)TIM2->SMCR,
+           (unsigned long)TIM5->CCER,
+           (unsigned long)TIM4->CCER,
+           (unsigned long)TIM3->CCER,
+           (unsigned long)TIM2->CCER);
 }
 
 #define MOTOR_TEST_SPEED_MPS 0.01f   // 电机测试速度，单位：米/秒
@@ -248,10 +367,21 @@ void app_init(void)
     SysTick_Init();
     SWJ_gpio_init();
     led_init();
+    LED_ON();
     key_init();
+
+    printf("\r\nBOOT: app_init enter, key=%u, tick=%lu\r\n",
+           KEY_GET_LEVEL() ? 1U : 0U,
+           (unsigned long)millis());
+    printf("BOOT: motor init start\r\n");
+
     app_motor_init();
     app_motor_set_closed_loop(0);
     motor_test_stop();
+
+    printf("BOOT: motor init ok\r\n");
+    encoder_input_diag_once();
+    Encoder_Init();
 
     (void)ENCODER_A_GetCounter();
     (void)ENCODER_B_GetCounter();
@@ -273,4 +403,5 @@ void app_loop(void)
     app_led_run();
     key_toggle_run();
     encoder_debug_run();
+    encoder_reg_debug_run();
 }

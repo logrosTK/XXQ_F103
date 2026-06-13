@@ -93,16 +93,11 @@ int main(void)
   MX_GPIO_Init();
   MX_ADC1_Init();
   MX_SPI2_Init();
-  MX_TIM2_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
-  MX_TIM5_Init();
+  /* TIM1/2/3/4/5/8 are initialized by the migrated motor/encoder drivers. */
   MX_UART5_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
-  MX_TIM1_Init();
-  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
   app_init();
 
@@ -178,9 +173,22 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
   __disable_irq();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
   while (1)
   {
+    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_4);
+    for (volatile uint32_t i = 0; i < 300000U; i++)
+    {
+    }
   }
   /* USER CODE END Error_Handler_Debug */
 }

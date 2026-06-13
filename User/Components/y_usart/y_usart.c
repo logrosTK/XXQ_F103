@@ -187,13 +187,28 @@ void uart5_init(u32 baud)
 	USART_Cmd(UART5, ENABLE);
 }
 
-/* 重定义fputc函数,写这个函数可以使用printf,记得开启Use MicroLIB */
-int fputc(int ch, FILE *f)
+int __io_putchar(int ch)
 {
-	while ((USART1->SR & 0X40) == 0)
-		; // 循环发送,直到发送完毕
+	uint32_t timeout = 100000U;
+
+	while ((USART1->SR & USART_SR_TXE) == 0U)
+	{
+		if (timeout == 0U)
+		{
+			return ch;
+		}
+		timeout--;
+	}
+
 	USART1->DR = (u8)ch;
 	return ch;
+}
+
+/* 重定义fputc函数,兼容不同C库的printf输出路径 */
+int fputc(int ch, FILE *f)
+{
+	(void)f;
+	return __io_putchar(ch);
 }
 
 /***********************************************
