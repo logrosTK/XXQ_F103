@@ -2,112 +2,26 @@
  * ================================================================================
  * @文件名称: app_main.c
  * @功能描述: 应用层主程序文件，系统入口和主循环
- *           包含: 编码器诊断、电机闭环测试、OLED显示、按键控制
+ *           包含: 电机闭环状态日志、OLED显示
  *           电机映射: A=左前(LF) B=右前(RF) C=右后(RR) D=左后(LR)
  * @所属模块: User层
  * @依赖: app_main.h, user_main.h, app_motor.h, y_encoder.h
  * @调用流程:
- *   app_init() -> 初始化各模块 -> 等待按键触发闭环测试
- *   app_loop() -> LED闪烁/按键检测/编码器调试输出
+ *   app_init() -> 初始化各模块 -> 电机保持停止
+ *   app_loop() -> LED闪烁/闭环状态日志输出
  * ================================================================================
  */
 
 #include "app_main.h"
 #include "user_main.h"
 
-#define MOTOR_TEST_SPEED_MPS 0.10f
-#define KEY_ACTIVE_LEVEL 0U
-#define KEY_DEBOUNCE_MS 30U
-#define MOTOR_STATUS_PERIOD_MS 1000U
+#define MOTOR_STATUS_PERIOD_MS 3000U
 
-// A=left-front, B=right-front, C=right-rear, D=left-rear.
-// motor_speed_set() uses positive values for forward; app_motor handles wheel polarity.
-#define MOTOR_A_TEST_TARGET_MPS (MOTOR_TEST_SPEED_MPS)
-#define MOTOR_B_TEST_TARGET_MPS (MOTOR_TEST_SPEED_MPS)
-#define MOTOR_C_TEST_TARGET_MPS (MOTOR_TEST_SPEED_MPS)
-#define MOTOR_D_TEST_TARGET_MPS (MOTOR_TEST_SPEED_MPS)
-
-static uint8_t motor_test_enabled = 0;
-
-static void motor_test_stop(void)
+static void motor_control_stop(void)
 {
     app_motor_set_closed_loop(0);
     motor_speed_set(0.0f, 0.0f, 0.0f, 0.0f);
     app_motor_run();
-    app_motor_set_closed_loop(0);
-}
-
-static void motor_test_forward(void)
-{
-    app_motor_set_closed_loop(0);
-    motor_speed_set(MOTOR_A_TEST_TARGET_MPS,
-                    MOTOR_B_TEST_TARGET_MPS,
-                    MOTOR_C_TEST_TARGET_MPS,
-                    MOTOR_D_TEST_TARGET_MPS);
-    (void)ENCODER_A_GetCounter();
-    (void)ENCODER_B_GetCounter();
-    (void)ENCODER_C_GetCounter();
-    (void)ENCODER_D_GetCounter();
-    app_motor_set_closed_loop(1);
-}
-
-static void motor_test_set_enabled(uint8_t enabled)
-{
-    motor_test_enabled = enabled ? 1U : 0U;
-
-    if (motor_test_enabled)
-    {
-        motor_test_forward();
-        printf("KEY: closed-loop motor ON, target A=%d B=%d C=%d D=%d mm/s\r\n",
-               (int)(MOTOR_A_TEST_TARGET_MPS * 1000.0f),
-               (int)(MOTOR_B_TEST_TARGET_MPS * 1000.0f),
-               (int)(MOTOR_C_TEST_TARGET_MPS * 1000.0f),
-               (int)(MOTOR_D_TEST_TARGET_MPS * 1000.0f));
-    }
-    else
-    {
-        motor_test_stop();
-        printf("KEY: closed-loop motor OFF\r\n");
-    }
-}
-
-static void key_toggle_run(void)
-{
-    static uint8_t last_sample = 0;
-    static uint8_t stable_level = 0;
-    static u32 last_change_ms = 0;
-
-    uint8_t sample = KEY_GET_LEVEL() ? 1U : 0U;
-    u32 now = millis();
-
-    if (sample != last_sample)
-    {
-        last_sample = sample;
-        last_change_ms = now;
-    }
-
-    if ((now - last_change_ms) < KEY_DEBOUNCE_MS)
-    {
-        return;
-    }
-
-    if (sample == stable_level)
-    {
-        return;
-    }
-
-    stable_level = sample;
-    if (stable_level == KEY_ACTIVE_LEVEL)
-    {
-        if (motor_test_enabled)
-        {
-            motor_test_set_enabled(0);
-        }
-        else
-        {
-            motor_test_set_enabled(1);
-        }
-    }
 }
 
 static void encoder_debug_run(void)
@@ -272,16 +186,14 @@ void app_init(void)
     SWJ_gpio_init();
     led_init();
     LED_ON();
-    key_init();
 
-    printf("\r\nBOOT: app_init enter, key=%u, tick=%lu\r\n",
-           KEY_GET_LEVEL() ? 1U : 0U,
+    printf("\r\nBOOT: app_init enter, tick=%lu\r\n",
            (unsigned long)millis());
 
     printf("BOOT: motor init start\r\n");
     app_motor_init();
     app_motor_set_closed_loop(0);
-    motor_test_stop();
+    motor_control_stop();
     printf("BOOT: motor init ok\r\n");
 
     (void)ENCODER_A_GetCounter();
@@ -289,20 +201,16 @@ void app_init(void)
     (void)ENCODER_C_GetCounter();
     (void)ENCODER_D_GetCounter();
 
-    printf("\r\nMotor closed-loop test ready.\r\n");
+    printf("\r\nMotor closed-loop ready.\r\n");
     printf("USART1: 115200 8N1, TX=PA9, RX=PA10.\r\n");
-    printf("KEY toggles closed-loop motor. Mapping: A=LF B=RF C=RR D=LR.\r\n");
-    printf("Target speed: A=%d B=%d C=%d D=%d mm/s, PID period=%d ms\r\n",
-           (int)(MOTOR_A_TEST_TARGET_MPS * 1000.0f),
-           (int)(MOTOR_B_TEST_TARGET_MPS * 1000.0f),
-           (int)(MOTOR_C_TEST_TARGET_MPS * 1000.0f),
-           (int)(MOTOR_D_TEST_TARGET_MPS * 1000.0f),
-           1000 / PID_RATE);
+    printf("Use motor_speed_set(A,B,C,D) and app_motor_set_closed_loop(1) to run.\r\n");
+    printf("Mapping: A=LF B=RF C=RR D=LR. PID period=%d ms, log period=%lu ms\r\n",
+           1000 / PID_RATE,
+           (unsigned long)MOTOR_STATUS_PERIOD_MS);
 }
 
 void app_loop(void)
 {
     app_led_run();
-    key_toggle_run();
     encoder_debug_run();
 }
