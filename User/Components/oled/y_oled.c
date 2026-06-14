@@ -17,7 +17,27 @@
 
 // oled标志，用来检测oled是否通信成功
 // 如果失败，说明oled没插上或者松动
-static uint8_t oled_detection_flag = 1;
+static void OLED_I2C_ReleaseAckClock(void)
+{
+    I2C_SDA_H();
+    delay_us(1);
+    I2C_SCL_H();
+    delay_us(1);
+    I2C_SCL_L();
+    delay_us(1);
+}
+
+static void I2C_WriteByte(uint8_t addr, uint8_t data)
+{
+    i2c_start();
+    i2c_write_byte(OLED_ADDRESS);
+    OLED_I2C_ReleaseAckClock();
+    i2c_write_byte(addr);
+    OLED_I2C_ReleaseAckClock();
+    i2c_write_byte(data);
+    OLED_I2C_ReleaseAckClock();
+    i2c_stop();
+}
 
 /***********************************************
     函数名称：i2c_write_byte(I2C_Byte)
@@ -25,11 +45,9 @@ static uint8_t oled_detection_flag = 1;
     函数参数：I2C_Byte 写入的字节
     返回值：	无
  ***********************************************/
-static void I2C_WriteByte(uint8_t addr, uint8_t data)
+#if 0
+static void I2C_WriteByte_AckChecked(uint8_t addr, uint8_t data)
 {
-    if (oled_detection_flag == 1)
-        return;
-
     i2c_start();
     i2c_write_byte(OLED_ADDRESS); // 发送器件地址+写命令
     if (i2c_wait_ack())           // 等待应答
@@ -48,6 +66,7 @@ static void I2C_WriteByte(uint8_t addr, uint8_t data)
     i2c_stop();
     return;
 }
+#endif
 
 /***********************************************
     函数名称：OLED_Write_Dat(I2C_Data)
@@ -79,8 +98,6 @@ void OLED_Write_Cmd(unsigned char I2C_Command)
  ***********************************************/
 void OLED_ON(void)
 {
-    OLED_Write_Cmd(0X8D);
-    OLED_Write_Cmd(0X14);
     OLED_Write_Cmd(0XAF);
 }
 
@@ -92,8 +109,6 @@ void OLED_ON(void)
  ***********************************************/
 void OLED_OFF(void)
 {
-    OLED_Write_Cmd(0X8D);
-    OLED_Write_Cmd(0X10);
     OLED_Write_Cmd(0XAE);
 }
 
@@ -107,7 +122,7 @@ void OLED_Set_Pos(unsigned char x, unsigned char y)
 {
     OLED_Write_Cmd(0xb0 + y);
     OLED_Write_Cmd(((x & 0xf0) >> 4) | 0x10);
-    OLED_Write_Cmd((x & 0x0f) | 0x01);
+    OLED_Write_Cmd(x & 0x0f);
 }
 
 /***********************************************
@@ -122,7 +137,7 @@ void OLED_Fill(unsigned char fill_Data)
     for (y = 0; y < 8; y++)
     {
         OLED_Write_Cmd(0xb0 + y);
-        OLED_Write_Cmd(0x01);
+        OLED_Write_Cmd(0x00);
         OLED_Write_Cmd(0x10);
         for (x = 0; x < X_WIDTH; x++)
             OLED_Write_Dat(fill_Data);
@@ -148,11 +163,61 @@ void OLED_CLS(void)
  ***********************************************/
 void OLED_Init(void)
 {
+    static const uint8_t oled_init_cmd[] = {
+        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40,
+        0x8D, 0x10, 0x20, 0x02, 0xA1, 0xC8, 0xDA, 0x12,
+        0x81, 0xF0, 0xD9, 0x71, 0xDB, 0x00, 0xA4, 0xA6,
+        0xAF
+    };
+    uint8_t i;
+
+    soft_i2c_gpio_init();
+    delay_ms(200);
+
+    for (i = 0; i < sizeof(oled_init_cmd); i++)
+    {
+        OLED_Write_Cmd(oled_init_cmd[i]);
+    }
+    OLED_CLS();
+    return;
+#if 0
+
     // 验证
     i2c_start();
     i2c_write_byte(OLED_ADDRESS); // 写操作
     oled_detection_flag = i2c_wait_ack();
     i2c_stop();
+
+    if (oled_detection_flag != 1)
+    {
+        OLED_Write_Cmd(0xfd);
+        OLED_Write_Cmd(0x12);
+        OLED_Write_Cmd(0xae);
+        OLED_Write_Cmd(0xd5);
+        OLED_Write_Cmd(0xa0);
+        OLED_Write_Cmd(0xa8);
+        OLED_Write_Cmd(0x3f);
+        OLED_Write_Cmd(0xd3);
+        OLED_Write_Cmd(0x00);
+        OLED_Write_Cmd(0x40);
+        OLED_Write_Cmd(0xa1);
+        OLED_Write_Cmd(0xc8);
+        OLED_Write_Cmd(0xda);
+        OLED_Write_Cmd(0x12);
+        OLED_Write_Cmd(0x81);
+        OLED_Write_Cmd(0x7f);
+        OLED_Write_Cmd(0xd9);
+        OLED_Write_Cmd(0x82);
+        OLED_Write_Cmd(0xdb);
+        OLED_Write_Cmd(0x34);
+        OLED_Write_Cmd(0xa4);
+        OLED_Write_Cmd(0xa6);
+        OLED_CLS();
+        OLED_Write_Cmd(0xaf);
+    }
+
+    return;
+#if 0
 
     if (oled_detection_flag == 1)
         return; // 未检测到设备
@@ -189,6 +254,8 @@ void OLED_Init(void)
     OLED_Set_Pos(0, 0);
 
     OLED_CLS();
+#endif
+#endif
 }
 
 /***********************************************

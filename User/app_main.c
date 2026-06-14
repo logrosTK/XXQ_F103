@@ -16,6 +16,29 @@
 #include "user_main.h"
 
 #define MOTOR_STATUS_PERIOD_MS 3000U
+#define OLED_STATUS_PERIOD_MS 500U
+#define OLED_LINE_CHARS 21U
+
+static int32_t oled_float_to_x10(float value)
+{
+    if (value >= 0.0f)
+    {
+        return (int32_t)(value * 10.0f + 0.5f);
+    }
+
+    return (int32_t)(value * 10.0f - 0.5f);
+}
+
+static int32_t oled_abs_i32(int32_t value)
+{
+    return (value < 0) ? -value : value;
+}
+
+static void oled_show_line(uint8_t y, char *text)
+{
+    text[OLED_LINE_CHARS] = '\0';
+    OLED_P6x8Str(0, y, (uint8_t *)text);
+}
 
 static void motor_control_stop(void)
 {
@@ -180,12 +203,64 @@ void OLED_Show_Motor_Speed(void)
     OLED_P6x8Str(0, 3, (uint8_t *)text);
 }
 
+static void oled_show_motor_closed_loop_status(void)
+{
+    char text[64];
+    int32_t kp10;
+    int32_t ki10;
+    int32_t kd10;
+    static u32 time_count = 0;
+
+    if (millis() - time_count < OLED_STATUS_PERIOD_MS)
+        return;
+
+    time_count = millis();
+    kp10 = oled_float_to_x10(motor_kp);
+    ki10 = oled_float_to_x10(motor_ki);
+    kd10 = oled_float_to_x10(motor_kd);
+
+    OLED_CLS();
+
+    snprintf(text, sizeof(text), "Kp:%ld.%ld Ki:%ld.%ld",
+             (long)(kp10 / 10), (long)oled_abs_i32(kp10 % 10),
+             (long)(ki10 / 10), (long)oled_abs_i32(ki10 % 10));
+    oled_show_line(0, text);
+
+    snprintf(text, sizeof(text), "Kd:%ld.%ld CL:%s",
+             (long)(kd10 / 10), (long)oled_abs_i32(kd10 % 10),
+             app_motor_get_closed_loop() ? "ON" : "OFF");
+    oled_show_line(1, text);
+
+    snprintf(text, sizeof(text), "TG A/B:%d/%d",
+             (int)(Wheel_A.TG * 1000.0f), (int)(Wheel_B.TG * 1000.0f));
+    oled_show_line(2, text);
+
+    snprintf(text, sizeof(text), "TG C/D:%d/%d",
+             (int)(Wheel_C.TG * 1000.0f), (int)(Wheel_D.TG * 1000.0f));
+    oled_show_line(3, text);
+
+    snprintf(text, sizeof(text), "RT A/B:%d/%d",
+             (int)(Wheel_A.RT * 1000.0f), (int)(Wheel_B.RT * 1000.0f));
+    oled_show_line(4, text);
+
+    snprintf(text, sizeof(text), "RT C/D:%d/%d",
+             (int)(Wheel_C.RT * 1000.0f), (int)(Wheel_D.RT * 1000.0f));
+    oled_show_line(5, text);
+
+    snprintf(text, sizeof(text), "PW A/B:%d/%d", Wheel_A.PWM, Wheel_B.PWM);
+    oled_show_line(6, text);
+
+    snprintf(text, sizeof(text), "PW C/D:%d/%d", Wheel_C.PWM, Wheel_D.PWM);
+    oled_show_line(7, text);
+}
+
 void app_init(void)
 {
     SysTick_Init();
     SWJ_gpio_init();
     led_init();
     LED_ON();
+    OLED_Init();
 
     printf("\r\nBOOT: app_init enter, tick=%lu\r\n",
            (unsigned long)millis());
@@ -213,4 +288,5 @@ void app_loop(void)
 {
     app_led_run();
     encoder_debug_run();
+    oled_show_motor_closed_loop_status();
 }
