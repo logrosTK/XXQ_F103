@@ -1,41 +1,98 @@
+/*
+ * ================================================================================
+ * @文件名称: y_global.c
+ * @功能描述: 全局功能模块，包含命令解析、动作组管理、运动学控制等核心功能
+ *           是整个系统的命令处理和动作执行中心
+ * @所属模块: Components/y_global
+ * @依赖: y_global.h, stm32f10x_conf.h, y_flash.h, y_servo.h, y_kinematics.h
+ * @命令列表:
+ *   $DST!     - 所有舵机/电机停止
+ *   $DST:x!   - 第x个舵机停止
+ *   $RST!     - 单片机重启
+ *   $DGS:x!   - 执行第x个动作组
+ *   $DGT:x-y,z! - 执行x到y组动作z次
+ *   $DJR!     - 所有舵机复位到中位(1500)
+ *   $Car:a,b,c,d! - 小车四轮速度设置
+ *   $ZNXJ!    - 智能循迹模式
+ *   $ZYBZ!    - 自由避障模式
+ *   $DJGS!    - 定距跟随模式
+ *   $QJ/$HT/$ZZ/$YZ/$ZPY/$YPY/$TZ - 前进/后退/左转/右转/左平移/右平移/停止
+ *   $KMS:x,y,z,time! - 机械臂运动学控制
+ *   $MVx!     - OLED显示模式切换
+ *   $GETA!    - 获取应答信号
+ *   #XXXPxxxxTxxxx! - 舵机调试命令
+ *   <Gxxxx#xxxPxxxxTxxxx!> - 动作组存储命令
+ * ================================================================================
+ */
+
 #include "./y_global/y_global.h"
 #include "stm32f10x_conf.h"
 
-char cmd_return[CMD_RETURN_SIZE]; // 用来处理临时的字符串指令
-u8 group_do_ok = 1;               // 完成动作组标记1
+/** 命令解析临时缓冲区，用于存放处理后返回的字符串 */
+char cmd_return[CMD_RETURN_SIZE];
+/** 动作组执行完成标志: 0=正在执行, 1=执行完毕 */
+u8 group_do_ok = 1;
 
-u8 AI_mode = 255;   // 运行的传感器的模式
-u8 forbid_turn = 0; // 循迹模式适配地图
+/** AI模式: 0=空闲, 1=循迹, 2=避障, 3=跟随, 255=停止 */
+u8 AI_mode = 255;
+/** 循迹模式地图适配标志 */
+u8 forbid_turn = 0;
 
-eeprom_info_t eeprom_info; // 控制板存储的信息
+/** 控制板EEPROM存储信息结构体 */
+eeprom_info_t eeprom_info;
 
-u32 action_time = 0; // 计算动作执行时间
-int do_start_index;  // 动作组执行 起始序号
-int do_group_cnt;    // 动作组执行 执行次数
-int group_num_start; // 动作组执行 起始序号
-int group_num_end;   // 动作组执行 终止序号
-int group_num_cnt;   // 动作组执行 起始变量
-int oled_mode = 0;   // oled显示速度时为0，显示功能为1
-int mv_mode = 0;     // oled显示速度时为0，显示功能为1
+/** 动作组执行时间（ms），由getMaxTime计算 */
+u32 action_time = 0;
+/** 动作组批量执行起始索引 */
+int do_start_index;
+/** 动作组批量执行剩余次数 */
+int do_group_cnt;
+/** 动作组起始编号 */
+int group_num_start;
+/** 动作组终止编号 */
+int group_num_end;
+/** 动作组执行次数 */
+int group_num_cnt;
+/** OLED显示模式: 0=速度显示, 1=功能显示 */
+int oled_mode = 0;
+/** OLED功能显示子模式 */
+int mv_mode = 0;
 
-/* 单片机软件复位 */
+/*
+ * 函数名称: soft_reset
+ * 功能描述: 单片机软件复位
+ *           关闭所有中断后调用NVIC_SystemReset()复位
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 通过$RST!命令触发，用于远程重启系统
+ */
 void soft_reset(void)
 {
     printf("stm32 reset\r\n");
-    // 关闭所有中断
     __set_FAULTMASK(1);
-    // 复位
     NVIC_SystemReset();
 }
 
-/* 总线串口发送 */
+/*
+ * 函数名称: zx_uart_send_str
+ * 功能描述: 总线串口发送字符串（同时发送到UART5和UART1）
+ * 参数说明: str - 要发送的字符串指针
+ * 返回值:   无
+ * 使用说明: UART5为半双工总线，UART1为调试输出
+ */
 void zx_uart_send_str(char *str)
 {
     uart5_send_str(str);
     uart1_send_str(str);
 }
 
-/* 所有串口发送 */
+/*
+ * 函数名称: all_uart_send_str
+ * 功能描述: 向所有串口发送字符串（UART1/2/3/5）
+ * 参数说明: str - 要发送的字符串指针
+ * 返回值:   无
+ * 使用说明: 用于向所有连接的设备广播数据
+ */
 void all_uart_send_str(char *str)
 {
     uart5_send_str(str);
@@ -44,16 +101,22 @@ void all_uart_send_str(char *str)
     uart3_send_str(str);
 }
 
-/**
- * @函数描述: 检测字符串str是否包含str2
- * @返回 {*}
+/*
+ * 函数名称: str_contain_str
+ * 功能描述: 检测字符串str中是否包含子串str2
+ * 参数说明: str - 源字符串指针
+ *          str2 - 要查找的子串指针
+ * 返回值:   0 - 未找到
+ *           非0 - str2在str中的位置（从1开始计数）
+ * 使用说明: 在命令解析中用于匹配命令关键字
+ *           示例: if(str_contain_str(cmd, "$DST!")) { ... }
  */
 uint16_t str_contain_str(char *str, char *str2)
 {
     char *str_temp, *str_temp2;
     str_temp = str;
     str_temp2 = str2;
-    while (*str_temp) // 循环遍历直到字符串的结束
+    while (*str_temp)
     {
         if (*str_temp == *str_temp2)
         {
@@ -79,7 +142,15 @@ uint16_t str_contain_str(char *str, char *str2)
     return 0;
 }
 
-// 字符串中的字符替代函数 把str字符串中所有的ch1换成ch2
+/*
+ * 函数名称: replace_char
+ * 功能描述: 字符串中的字符替换，将str中所有ch1替换为ch2
+ * 参数说明: str - 字符串指针（原地修改）
+ *          ch1 - 要被替换的字符
+ *          ch2 - 替换后的字符
+ * 返回值:   无
+ * 使用说明: 用于存储动作组时将<>替换为{}存储到Flash
+ */
 void replace_char(char *str, char ch1, char ch2)
 {
     while (*str)
@@ -93,7 +164,19 @@ void replace_char(char *str, char ch1, char ch2)
     return;
 }
 
-// 处理 #000P1500T1000! 类似的字符串
+/*
+ * 函数名称: parse_action
+ * 功能描述: 解析#开头的舵机控制字符串
+ *           支持格式:
+ *           #xxxPyyyyTzzzz! - 设置xxx号舵机PWM为yyyy，时间zzzzms
+ *           #xxxPSCK+bbb!    - 设置xxx号舵机偏置+bbb
+ *           #xxxPSCK-bbb!    - 设置xxx号舵机偏置-bbb
+ *           #xxxPDST!        - 停止xxx号舵机
+ * 参数说明: str - 要解析的字符串指针
+ * 返回值:   无
+ * 使用说明: 无阻塞，立即设置舵机运动参数
+ *           支持多个#xxxPyyyyTzzzz!连续解析
+ */
 void parse_action(char *str)
 {
     u16 index = 0, time = 0, i = 0, j = 0;
@@ -101,7 +184,7 @@ void parse_action(char *str)
     float pwm = 0;
 
     zx_uart_send_str(str);
-    len = strlen((char *)str); // 获取串口接收数据的长度
+    len = strlen((char *)str);
 
     if (len >= 12 && str[0] == '#' && str[4] == 'P' && str[5] == 'S' && str[6] == 'C' && str[7] == 'K' && str[12] == '!')
     {
@@ -192,35 +275,44 @@ void parse_action(char *str)
     }
 }
 
-// 动作组保存函数
-// 只有用<>包含的字符串才能在此函数中进行解析
+/*
+ * 函数名称: save_action
+ * 功能描述: 动作组保存函数（仅处理用<>包含的字符串）
+ *           支持三种格式:
+ *           <$!          - 删除开机动作
+ *           <$xxx!       - 设置开机动作
+ *           <Gxxxx#xxxPxxxxTxxxx!> - 存储第xxxx号动作组
+ * 参数说明: str - 要解析的字符串指针
+ * 返回值:   无
+ * 使用说明: 通过串口接收的<>格式命令调用
+ *           动作组存储到W25Q64 Flash中
+ *           存储成功回复"A"，失败回复"E"
+ */
 void save_action(char *str)
 {
     int32_t action_index = -1;
 
-    if (str[1] == '$' && str[2] == '!') // 删除开机动作
+    if (str[1] == '$' && str[2] == '!')
     {
         eeprom_info.pre_cmd[PRE_CMD_SIZE] = 0;
         rewrite_eeprom();
         uart1_send_str("@CLEAR PRE_CMD OK!");
         return;
     }
-    else if (str[1] == '$') // 设置开机动作
+    else if (str[1] == '$')
     {
         memset(eeprom_info.pre_cmd, 0, sizeof(eeprom_info.pre_cmd));
-        strcpy(eeprom_info.pre_cmd, str + 1);        // 对字符串进行复制
-        eeprom_info.pre_cmd[strlen(str) - 2] = '\0'; // 赋值字符0
+        strcpy(eeprom_info.pre_cmd, str + 1);
+        eeprom_info.pre_cmd[strlen(str) - 2] = '\0';
         eeprom_info.pre_cmd[PRE_CMD_SIZE] = FLAG_VERIFY;
         rewrite_eeprom();
         all_uart_send_str("@SET PRE_CMD OK!");
-        all_uart_send_str(eeprom_info.pre_cmd); // 打印存储进去的指令
+        all_uart_send_str(eeprom_info.pre_cmd);
         return;
     }
 
-    // 获取动作的组号如果不正确，或是第6个字符不是#则认为字符串错误
     action_index = (str[2] - '0') * 1000 + (str[3] - '0') * 100 + (str[4] - '0') * 10 + (str[5] - '0');
 
-    //<G0000#000P1500T1000!>
     if ((action_index < 0) || str[6] != '#')
     {
         all_uart_send_str("E");
@@ -231,37 +323,53 @@ void save_action(char *str)
     {
         w25x_erase_sector(action_index * ACTION_SIZE / 4096);
     }
-    // 把尖括号替换成大括号直接存储到存储芯片里面去，则在执行动作组的时候直接拿出来解析就可以了
     replace_char(str, '<', '{');
     replace_char(str, '>', '}');
 
     w25x_write((u8 *)str, action_index * ACTION_SIZE, strlen(str) + 1);
 
-//    memset(str, 0, sizeof((char *)str));
-//    w25x_read(str, action_index * ACTION_SIZE, ACTION_SIZE);
-//    uart1_send_str(str);
-
-    // 反馈一个A告诉上位机我已经接收到了
     all_uart_send_str("A");
 
     return;
 }
 
 /*
-    所有舵机停止命令：    $DST!
-    第x个舵机停止命令：   $DST:x!
-    单片机重启命令：$RST!
-    检查动作组x到y组命令：$CGP:x-y!
-    执行第x个动作：       $DGS:x!
-    执行第x到y组动作z次： $DGT:x-y,z!
-    小车左x、右轮y速度:   $DCR:x,y!
-    所有舵机复位命令：    $DJR!
-    获取应答信号：        $GETA!
-    获取智能信号：        $SMODE1!
-    $KINEMATICS:x,y,z,time! //坐标单位mm，时间单位ms
+ * 支持的串口命令列表:
+ *   $DRS!            - 测试应答 "hello word!"
+ *   $DST!            - 全部停止
+ *   $DST:x!          - 停止第x号舵机
+ *   $RST!            - 软件复位
+ *   $DGS:x!          - 执行第x号动作组1次
+ *   $DGT:x-y,z!      - 执行x到y号动作组z次
+ *   $DJR!            - 所有舵机复位到中位
+ *   $Car:a,b,c,d!    - 小车四轮速度
+ *   $ZNXJ!           - 智能循迹
+ *   $ZYBZ!           - 自由避障
+ *   $DJGS!           - 定距跟随
+ *   $QJ!             - 前进
+ *   $HT!             - 后退
+ *   $ZZ!             - 左转
+ *   $YZ!             - 右转
+ *   $ZPY!            - 左平移
+ *   $YPY!            - 右平移
+ *   $TZ!             - 停止
+ *   $GETA!           - 应答"AAA"
+ *   $SMART_STOP!     - 智能停止
+ *   $KMS:x,y,z,time! - 机械臂运动学定位
+ *   $MVx!            - OLED显示切换
+ *   $RunStop!        - 停止OLED功能显示
+ */
 
-*/
-// 命令解析函数
+/*
+ * 函数名称: parse_cmd
+ * 功能描述: 命令解析函数，解析$开头的所有系统命令
+ *           根据命令关键字分发到不同的处理逻辑
+ * 参数说明: cmd - 命令字符串指针
+ * 返回值:   无
+ * 使用说明: 由串口接收处理函数调用
+ *           命令格式: $XXX:参数!
+ *           支持多种命令，详见上方命令列表
+ */
 void parse_cmd(char *cmd)
 {
     int pos = 0, index = 0, int1 = 0, int4 = 0;
@@ -279,8 +387,8 @@ void parse_cmd(char *cmd)
     {
         group_do_ok = 1;
         pwmServo_stop_motion(255);
-        all_uart_send_str("#255PDST!"); // 总线停止
-        motor_speed_set(0, 0, 0, 0);    // 车停
+        all_uart_send_str("#255PDST!");
+        motor_speed_set(0, 0, 0, 0);
         AI_mode = 255;
     }
     else if (pos = str_contain_str(cmd, "$DST:"), pos)
@@ -496,7 +604,14 @@ void parse_cmd(char *cmd)
     }
 }
 
-// 获取最大时间
+/*
+ * 函数名称: getMaxTime
+ * 功能描述: 获取动作组字符串中所有T命令的最大时间值
+ *           遍历字符串找到所有Txxxx，取最大值
+ * 参数说明: str - 动作组字符串指针
+ * 返回值:   最大时间值(ms)，用于计算动作组总执行时间
+ * 使用说明: 在执行动作组前调用，用于计算等待时间
+ */
 int getMaxTime(char *str)
 {
     int i = 0, max_time = 0, tmp_time = 0;

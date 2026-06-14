@@ -1,7 +1,29 @@
+/*
+ * ================================================================================
+ * @文件名称: app_ps2.c
+ * @功能描述: 应用层PS2手柄控制模块
+ *           读取手柄数据，处理摇杆控制小车和按键触发动作组
+ *           支持红灯模式和绿灯模式两种按键映射
+ * @所属模块: User层
+ * @依赖: app_ps2.h, ps2/y_ps2.h, app_motor.h
+ * @数据说明:
+ *   psx_buf[0]=模式, buf[1]=LED状态, buf[2]=按键高字节
+ *   buf[3-4]=16按键位图, buf[5-6]=右摇杆X/Y, buf[7-8]=左摇杆X/Y
+ *   绿灯模式(PS2_LED_GRN): 摇杆控制小车运动
+ *   按键按下释放分别触发pre_cmd_set_red/pre_cmd_set_grn中定义的命令
+ * ================================================================================
+ */
+
 #include "app_ps2.h"
 
+/*
+ * 全局数组: pre_cmd_set_red
+ * 功能描述: 绿灯模式下16个按键按下(PRESS)时触发的命令字符串
+ *           按键顺序: L2,R2,L1,R1,RU,RR,RD,RL,SE,AL,AR,ST,LU,LR,LD,LL
+ *           格式: "<PS2_REDxx:命令^释放命令>"
+ *           其中^前为按下命令，^后为释放命令
+ */
 const char *pre_cmd_set_red[PSX_BUTTON_NUM] = {
-	// 手柄按键功能字符串 绿灯模式下使用
 	"<PS2_RED01:#005P0600T2000!^#005PDST!>", // L2
 	"<PS2_RED02:#005P2400T2000!^#005PDST!>", // R2
 	"<PS2_RED03:#004P0600T2000!^#004PDST!>", // L1
@@ -20,8 +42,12 @@ const char *pre_cmd_set_red[PSX_BUTTON_NUM] = {
 	"<PS2_RED16:#000P2400T2000!^#000PDST!>", // LL
 };
 
+/*
+ * 全局数组: pre_cmd_set_grn
+ * 功能描述: 红灯模式下16个按键按下(PRESS)时触发的命令字符串
+ *           使用$DCR命令控制小车运动（红灯模式下按键控制小车）
+ */
 const char *pre_cmd_set_grn[PSX_BUTTON_NUM] = {
-	// 红灯模式下按键的配置
 	"<PS2_RED01:$DCR:0,500,500,0!^$DCR:0,0,0,0!>",			   // L2    左上500
 	"<PS2_RED02:$DCR:500,0,0,500!^$DCR:0,0,0,0!>",			   // R2	右上500
 	"<PS2_RED03:$DCR:0,1000,1000,0!^$DCR:0,0,0,0!>",		   // L1	左上1000
@@ -43,41 +69,46 @@ const char *pre_cmd_set_grn[PSX_BUTTON_NUM] = {
 void parse_psx_buf(unsigned char *buf, unsigned char mode);
 void loop_ps2_car(void);
 
-/**
- * @函数描述: PS2设备控制初始化
- * @return {*}
+/*
+ * 函数名称: app_ps2_init
+ * 功能描述: 初始化PS2手柄硬件（GPIO引脚）
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 在系统初始化时调用一次
  */
 void app_ps2_init(void)
 {
-	ps2_init(); /* PS2引脚初始化 */
+	ps2_init();
 }
 
-/**
- * @函数描述: 循环执行工作
- * @return {*}
+/*
+ * 函数名称: app_ps2_run
+ * 功能描述: PS2手柄主循环（每50ms执行一次）
+ *           读取手柄数据 -> 处理摇杆控制 -> 检测按键变化并解析
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 在主循环中调用
+ *           仅当按键状态变化时才触发parse_psx_buf解析
+ *           避免重复解析相同按键状态
  */
 void app_ps2_run(void)
 {
 	static unsigned char psx_button_bak[2] = {0};
 	static u32 systick_ms_bak = 0;
 
-	// 每50ms处理1次
 	if (millis() - systick_ms_bak < 50)
 		return;
 	systick_ms_bak = millis();
 
-	ps2_write_read(); /* 读取ps2数据 */
+	ps2_write_read();
 
-	loop_ps2_car(); /* 处理小车电机摇杆控制 */
+	loop_ps2_car();
 
-	// 对比两次获取的按键值是否相同 ，相同就不处理，不相同则处理
 	if ((psx_button_bak[0] == psx_buf[3]) && (psx_button_bak[1] == psx_buf[4]))
 	{
 	}
 	else
 	{
-		// printf("parse_psx_buf\r\n");
-		// 处理buf3和buf4两个字节，这两个字节存储这手柄16个按键的状态
 		parse_psx_buf(psx_buf + 3, psx_buf[1]);
 		psx_button_bak[0] = psx_buf[3];
 		psx_button_bak[1] = psx_buf[4];
@@ -85,7 +116,19 @@ void app_ps2_run(void)
 	}
 }
 
-// 处理麦轮小车电机摇杆控制
+/*
+ * 函数名称: loop_ps2_car
+ * 功能描述: 处理PS2摇杆控制麦轮小车（仅绿灯模式下生效）
+ *           左摇杆(Y轴buf[8]): 前进/后退
+ *           左摇杆(X轴buf[7]): 左移/右移
+ *           右摇杆(X轴buf[5]): 左转/右转
+ *           使用麦轮运动学公式将摇杆值转换为四个轮子的速度
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 绿灯模式(PS2_LED_GRN)下自动生效
+ *           摇杆中值127，死区±10（通过num变量定义）
+ *           速度值除以1000转换为m/s传给motor_speed_set
+ */
 void loop_ps2_car(void)
 {
 
@@ -140,7 +183,19 @@ void loop_ps2_car(void)
 
 }
 
-// 处理手柄按键字符，buf为字符数组，mode是指模式 主要是红灯和绿灯模式
+/*
+ * 函数名称: parse_psx_buf
+ * 功能描述: 解析PS2手柄按键缓冲区，根据按键变化触发对应命令
+ *           检测16个按键的按下(press)和释放(release)事件
+ *           按键按下: 触发pre_cmd_set_red/grn中^前的命令
+ *           按键释放: 触发pre_cmd_set_red/grn中^后的命令
+ * 参数说明: buf - 按键数据缓冲区指针（psx_buf+3，2字节16按键位图）
+ *          mode - 手柄模式 (PS2_LED_GRN绿灯/PS2_LED_RED红灯)
+ * 返回值:   无
+ * 使用说明: 由app_ps2_run()在检测到按键变化时调用
+ *           命令以$开头调用parse_cmd(), 以#开头调用parse_action()
+ *           使用bak变量保存上一次按键状态以检测变化
+ */
 void parse_psx_buf(unsigned char *buf, unsigned char mode)
 {
 	u8 i;
@@ -153,7 +208,7 @@ void parse_psx_buf(unsigned char *buf, unsigned char mode)
 		temp2 = temp;
 		temp &= bak;
 		for (i = 0; i < 16; i++)
-		{ // 16个按键一次轮询
+		{
 			if ((1 << i) & temp)
 			{
 			}

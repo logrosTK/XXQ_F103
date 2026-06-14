@@ -15,6 +15,9 @@ typedef struct
 } ROBOT_Wheel;
 
 extern ROBOT_Wheel Wheel_A, Wheel_B, Wheel_C, Wheel_D;
+extern float motor_kp;
+extern float motor_ki;
+extern float motor_kd;
 
 void motor_init(void); /* 电机控制引脚配置 */
 
@@ -23,6 +26,12 @@ int16_t SPEED_PidCtlA(float spd_target, float spd_current);   //PID控制函数�
 int16_t SPEED_PidCtlB(float spd_target, float spd_current);    //PID控制函数，电机B
 int16_t SPEED_PidCtlC(float spd_target, float spd_current);    //PID控制函数，电机C
 int16_t SPEED_PidCtlD(float spd_target, float spd_current);    //PID控制函数，电机D
+void SPEED_PidReset(void);
+void SPEED_PidResetA(void);
+void SPEED_PidResetB(void);
+void SPEED_PidResetC(void);
+void SPEED_PidResetD(void);
+void SPEED_PidSetParam(float kp, float ki, float kd);
 
 void MOTOR_A_SetSpeed(int16_t speed);   //电机A控制
 void MOTOR_B_SetSpeed(int16_t speed);   //电机B控制

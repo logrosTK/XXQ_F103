@@ -1,3 +1,19 @@
+/*
+ * ================================================================================
+ * @文件名称: app_sensor.c
+ * @功能描述: 应用层传感器管理模块
+ *           管理多种智能模式: 循迹(AI_mode=1)、自由避障(AI_mode=2)、跟随(AI_mode=3)
+ *           包含普通循迹和增强循迹两种模式切换
+ * @所属模块: User层
+ * @依赖: app_sensor.h, tracking.h, ultrasonic.h
+ * @模式说明:
+ *   AI_mode=0: 空闲
+ *   AI_mode=1: 智能循迹 (xunji_mode=0普通/xunji_mode=1增强)
+ *   AI_mode=2: 自由避障
+ *   AI_mode=3: 跟随
+ *   AI_mode=255: 停止所有模式
+ * ================================================================================
+ */
 ///*
 // * @文件描述:
 // * @作者: Q
@@ -6,56 +22,67 @@
 // */
 #include "app_sensor.h"
 
+/** 前向声明：各AI模式函数 */
 static void AI_xunji_moshi(void);
 void AI_ziyou_bizhang(void);
 static void AI_xunji_moshi_pro(void);
 void AI_gensui_moshi(void);
 
+/** 循迹模式选择: 0=普通循迹(十字路口), 1=增强循迹(锐角/直角) */
 uint8_t xunji_mode = 0;
+/** 四路红外探头原始数据: 0=检测到黑线, 1=未检测到 */
 uint8_t IR_X3, IR_X2, IR_X4, IR_X1;
+/** 增强循迹转弯状态: 0=直走, 1=左转中, 2=右转中 */
 int trackState = 0;
+/** 十字路口计数(T_cross)和S弯防抖标志(flag_F)及转弯限制标志(forbid_F) */
 int T_cross = 0, flag_F, forbid_F;
 
-/**
- * @函数描述: 传感器相关设备控制初始化
- * @return {*}
+/*
+ * 函数名称: app_sensor_init
+ * 功能描述: 初始化传感器相关设备（循迹探头和超声波传感器）
+ *           初始化四路红外循迹，检测超声波设备是否存在
+ *           设置超声波RGB灯为绿色
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 在系统初始化时调用一次
  */
 void app_sensor_init(void)
 {
     TRACK_IR4_Init();
 
-    // 打印初始化结果（调试用）
     if (ultrasonic_Init())
     {
-        printf("\nultrasonic_Init succeed\n"); // 初始化成功
+        printf("\nultrasonic_Init succeed\n");
     }
     else
     {
-        printf("\nultrasonic_Init fail\n"); // 初始化失败
+        printf("\nultrasonic_Init fail\n");
     }
 
     ultrasonic_rgb_r(0, 255, 0);
     ultrasonic_rgb_t(0, 255, 0);
 }
 
-/**
- * @函数描述: 循环检测输出传感器引脚的AD值
- * @return {*}
+/*
+ * 函数名称: app_sensor_run
+ * 功能描述: 传感器主循环，根据AI_mode选择执行不同智能模式
+ *           AI_mode模式切换时自动设置group_do_ok标志
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 在主循环中周期调用
+ *           当group_do_ok==0（正在执行动作组）时跳过传感器处理
  */
 void app_sensor_run(void)
 {
     static u8 AI_mode_bak;
 
-    // 有动作执行，直接返回
     if (group_do_ok == 0)
         return;
 
     if (AI_mode == 0)
     {
     }
-    else if (AI_mode == 1) /* 调用智能循迹模式函数,可直接在代码14行找到 uint8_t xunji_mode = 1;
-                              进行循迹功能切换，等于0时为普通十字路口循迹，等于1时加强了四路循迹，可进行锐角直角循迹，适配本店地图。
-                            */
+    else if (AI_mode == 1)
     {
         if (xunji_mode == 0)
             AI_xunji_moshi();
@@ -64,11 +91,11 @@ void app_sensor_run(void)
     }
     else if (AI_mode == 2)
     {
-        AI_ziyou_bizhang(); // 自由避障
+        AI_ziyou_bizhang();
     }
     else if (AI_mode == 3)
     {
-        AI_gensui_moshi(); // 跟随功能
+        AI_gensui_moshi();
     }
     else if (AI_mode == 10)
     {
@@ -82,12 +109,23 @@ void app_sensor_run(void)
     }
 }
 
-/*************************************************************
-函数名称：AI_xunji_moshi()
-功能介绍：实现循迹功能
-函数参数：无
-返回值：  无
-*************************************************************/
+/*
+ * 函数名称: AI_xunji_moshi
+ * 功能描述: 普通循迹模式（四路红外十字路口循迹）
+ *           根据四路红外探头状态控制小车沿黑线行走
+ *           支持最多3个十字路口的识别和处理
+ * 状态说明:
+ *   state=0: 普通循迹，根据四路探头状态控制方向
+ *   state=1: 第一次十字路口
+ *   state=2: 第二次十字路口
+ *   state=3: 第三次十字路口（后退出循迹模式）
+ *   cross: 十字路口计数(0/1/2)
+ *   cross_flag: 十字路口执行完成标志
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 由app_sensor_run()在AI_mode=1且xunji_mode=0时调用
+ *           须先正确初始化四路红外探头
+ */
 static void AI_xunji_moshi(void)
 {
     uint8_t IR_X3, IR_X2, IR_X4, IR_X1;
@@ -177,6 +215,22 @@ static void AI_xunji_moshi(void)
     }
 }
 
+/*
+ * 函数名称: AI_xunji_moshi_pro
+ * 功能描述: 增强循迹模式（支持锐角和直角转弯）
+ *           相比普通模式增加了复杂路况处理能力
+ *           通过trackState状态机实现: 0=正常/1=左转中/2=右转中
+ * 关键变量:
+ *   trackState: 0=正常直走, 1=持续左转, 2=持续右转
+ *   flag_F: S弯防抖标志，防止X4探头频繁切换
+ *   forbid_F: 限制标志
+ *   forbid_turn: 地图适配标志，遇到特定T字路口时不转弯
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 由app_sensor_run()在AI_mode=1且xunji_mode=1时调用
+ *           可通过调整电机速度参数优化循迹效果
+ *           避免在此函数中使用delay_ms，会导致程序异常
+ */
 static void AI_xunji_moshi_pro(void)
 {
     IR_X3 = TRTACK_IR4_X3_READ();
@@ -283,12 +337,19 @@ static void AI_xunji_moshi_pro(void)
     }
 }
 
-/*************************************************************
-函数名称：AI_ziyou_bizhang()
-功能介绍：识别物体距离从而避开物体前进
-函数参数：无
-返回值：  无
-*************************************************************/
+
+/*
+ * 函数名称: AI_ziyou_bizhang
+ * 功能描述: 自由避障模式，根据超声波距离检测自动避开障碍物
+ *           每100ms检测一次距离:
+ *             距离 > 35cm (bz_num=3): 前进0.1m/s
+ *             距离 15~35cm (bz_num=2): 左转避障
+ *             距离 < 15cm (bz_num=1): 后退
+ *           仅距离档次变化时才切换运动状态
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 由app_sensor_run()在AI_mode=2时调用
+ */
 void AI_ziyou_bizhang(void)
 {
     static u32 systick_ms_bak = 0;
@@ -340,12 +401,18 @@ void AI_ziyou_bizhang(void)
     }
 }
 
-/*************************************************************
-函数名称：AI_gensui_moshi()
-功能介绍：检测物体距离，在一定距离内实现跟随功能
-函数参数：无
-返回值：  无
-*************************************************************/
+/*
+ * 函数名称: AI_gensui_moshi
+ * 功能描述: 定距跟随模式，根据超声波测距结果控制小车保持跟随距离
+ *           每100ms检测一次距离:
+ *             距离 > 25cm: 前进0.1m/s
+ *             距离 20~25cm: 停止（保持距离）
+ *             距离 < 20cm: 后退0.1m/s
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 由app_sensor_run()在AI_mode=3时调用
+ *           需要先初始化超声波传感器
+ */
 void AI_gensui_moshi(void)
 {
     static u32 systick_ms_bak = 0;

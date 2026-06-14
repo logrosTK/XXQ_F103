@@ -1,9 +1,41 @@
+/*
+ * ================================================================================
+ * @文件名称: y_ADC.c
+ * @功能描述: ADC模数转换驱动，使用DMA循环采集PC3引脚的模拟电压
+ *           用于电池电压检测等模拟量采集
+ * @所属模块: Components/y_ADC
+ * @依赖: y_ADC.h, HAL库
+ * @硬件: PC3 -> ADC1_CH13, DMA1_Channel1
+ * @采样参数: 连续转换模式，软件触发，239.5周期采样时间
+ * ================================================================================
+ */
+
 #include "y_ADC/y_ADC.h"
 
+/*
+ * 全局变量: ADC_ConvertedValue
+ * 功能描述: ADC转换结果存储变量，由DMA自动更新
+ *           12位ADC精度，取值范围 0~4095
+ *           对应模拟电压: ADC_ConvertedValue * 3.3V / 4095
+ */
 __IO uint16_t ADC_ConvertedValue;
 
+/** DMA句柄，用于ADC1的DMA数据传输 */
 static DMA_HandleTypeDef hdma_adc1_user;
 
+/*
+ * 函数名称: ADC_init
+ * 功能描述: 初始化ADC1，配置DMA循环采集模式
+ *           使用PC3引脚（ADC_CHANNEL_13），连续转换
+ *           DMA自动将转换结果存入ADC_ConvertedValue
+ * 参数说明: 无
+ * 返回值:   无
+ * 使用说明: 在系统初始化时调用一次
+ *           调用后ADC_ConvertedValue会由DMA自动持续更新
+ *           读取ADC_ConvertedValue即可获得当前ADC采样值
+ *           电压计算: V = ADC_ConvertedValue * 3.3 / 4095
+ *           注意: 初始化失败会调用Error_Handler()
+ */
 void ADC_init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure = {0};
