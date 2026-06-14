@@ -34,10 +34,23 @@ static int32_t oled_abs_i32(int32_t value)
     return (value < 0) ? -value : value;
 }
 
-static void oled_show_line(uint8_t y, char *text)
+static void oled_show_line(uint8_t y, const char *text)
 {
-    text[OLED_LINE_CHARS] = '\0';
-    OLED_P6x8Str(0, y, (uint8_t *)text);
+    uint8_t index;
+    char line[OLED_LINE_CHARS + 1U];
+
+    for (index = 0; index < OLED_LINE_CHARS; index++)
+    {
+        line[index] = ' ';
+    }
+
+    for (index = 0; (index < OLED_LINE_CHARS) && (text[index] != '\0'); index++)
+    {
+        line[index] = text[index];
+    }
+
+    line[OLED_LINE_CHARS] = '\0';
+    OLED_P6x8Str(0, y, (uint8_t *)line);
 }
 
 static void motor_control_stop(void)
@@ -188,19 +201,24 @@ void OLED_Show_Motor_Speed(void)
         beep_on_times(3, 10);
     }
 
-    OLED_CLS(); // 清屏OLED，避免显示重叠
-
     // 第1行显示：电机A、B的速度 mm/s
     sprintf(text, "A:%d, B:%d mm/s", (int)(Wheel_A.RT * 1000), (int)(Wheel_B.RT * 1000));
-    OLED_P6x8Str(0, 0, (uint8_t *)text);
+    oled_show_line(0, text);
 
     // 第2行显示：电机C、D的速度
     sprintf(text, "C:%d, D:%d mm/s", (int)(Wheel_C.RT * 1000), (int)(Wheel_D.RT * 1000));
-    OLED_P6x8Str(0, 1, (uint8_t *)text);
+    oled_show_line(1, text);
+
+    oled_show_line(2, "");
 
     // 第3行显示：系统电压（保留2位小数）
     sprintf(text, "Voltage=%.2fv", voltage_v);
-    OLED_P6x8Str(0, 3, (uint8_t *)text);
+    oled_show_line(3, text);
+
+    oled_show_line(4, "");
+    oled_show_line(5, "");
+    oled_show_line(6, "");
+    oled_show_line(7, "");
 }
 
 static void oled_show_motor_closed_loop_status(void)
@@ -209,6 +227,7 @@ static void oled_show_motor_closed_loop_status(void)
     int32_t kp10;
     int32_t ki10;
     int32_t kd10;
+    uint32_t ultrasonic_x100;
     static u32 time_count = 0;
 
     if (millis() - time_count < OLED_STATUS_PERIOD_MS)
@@ -218,39 +237,52 @@ static void oled_show_motor_closed_loop_status(void)
     kp10 = oled_float_to_x10(motor_kp);
     ki10 = oled_float_to_x10(motor_ki);
     kd10 = oled_float_to_x10(motor_kd);
+    ultrasonic_x100 = app_sensor_get_ultrasonic_distance_x100();
 
-    OLED_CLS();
-
-    snprintf(text, sizeof(text), "Kp:%ld.%ld Ki:%ld.%ld",
+    snprintf(text, sizeof(text), "P:%ld.%ld I:%ld.%ld D:%ld.%ld",
              (long)(kp10 / 10), (long)oled_abs_i32(kp10 % 10),
-             (long)(ki10 / 10), (long)oled_abs_i32(ki10 % 10));
+             (long)(ki10 / 10), (long)oled_abs_i32(ki10 % 10),
+             (long)(kd10 / 10), (long)oled_abs_i32(kd10 % 10));
     oled_show_line(0, text);
 
-    snprintf(text, sizeof(text), "Kd:%ld.%ld CL:%s",
-             (long)(kd10 / 10), (long)oled_abs_i32(kd10 % 10),
-             app_motor_get_closed_loop() ? "ON" : "OFF");
-    oled_show_line(1, text);
+    oled_show_line(1, "---------------------");
 
-    snprintf(text, sizeof(text), "TG A/B:%d/%d",
-             (int)(Wheel_A.TG * 1000.0f), (int)(Wheel_B.TG * 1000.0f));
+    snprintf(text, sizeof(text), "     A   B   C   D");
     oled_show_line(2, text);
 
-    snprintf(text, sizeof(text), "TG C/D:%d/%d",
-             (int)(Wheel_C.TG * 1000.0f), (int)(Wheel_D.TG * 1000.0f));
+    snprintf(text, sizeof(text), "TG%4d%4d%4d%4d",
+             (int)(Wheel_A.TG * 1000.0f),
+             (int)(Wheel_B.TG * 1000.0f),
+             (int)(Wheel_C.TG * 1000.0f),
+             (int)(Wheel_D.TG * 1000.0f));
     oled_show_line(3, text);
 
-    snprintf(text, sizeof(text), "RT A/B:%d/%d",
-             (int)(Wheel_A.RT * 1000.0f), (int)(Wheel_B.RT * 1000.0f));
+    snprintf(text, sizeof(text), "RT%4d%4d%4d%4d",
+             (int)(Wheel_A.RT * 1000.0f),
+             (int)(Wheel_B.RT * 1000.0f),
+             (int)(Wheel_C.RT * 1000.0f),
+             (int)(Wheel_D.RT * 1000.0f));
     oled_show_line(4, text);
 
-    snprintf(text, sizeof(text), "RT C/D:%d/%d",
-             (int)(Wheel_C.RT * 1000.0f), (int)(Wheel_D.RT * 1000.0f));
+    snprintf(text, sizeof(text), "PW%4d%4d%4d%4d",
+             Wheel_A.PWM,
+             Wheel_B.PWM,
+             Wheel_C.PWM,
+             Wheel_D.PWM);
     oled_show_line(5, text);
 
-    snprintf(text, sizeof(text), "PW A/B:%d/%d", Wheel_A.PWM, Wheel_B.PWM);
-    oled_show_line(6, text);
+    oled_show_line(6, "---------------------");
 
-    snprintf(text, sizeof(text), "PW C/D:%d/%d", Wheel_C.PWM, Wheel_D.PWM);
+    if (app_sensor_is_ultrasonic_distance_valid())
+    {
+        snprintf(text, sizeof(text), "US:%lu.%02lu cm",
+                 (unsigned long)(ultrasonic_x100 / 100U),
+                 (unsigned long)(ultrasonic_x100 % 100U));
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "US: read failed");
+    }
     oled_show_line(7, text);
 }
 
@@ -260,6 +292,7 @@ void app_init(void)
     SWJ_gpio_init();
     led_init();
     LED_ON();
+    app_uart_init();
     OLED_Init();
 
     printf("\r\nBOOT: app_init enter, tick=%lu\r\n",
@@ -270,6 +303,10 @@ void app_init(void)
     app_motor_set_closed_loop(0);
     motor_control_stop();
     printf("BOOT: motor init ok\r\n");
+
+    printf("BOOT: sensor init start\r\n");
+    app_sensor_init();
+    printf("BOOT: sensor init ok\r\n");
 
     (void)ENCODER_A_GetCounter();
     (void)ENCODER_B_GetCounter();
@@ -286,6 +323,8 @@ void app_init(void)
 
 void app_loop(void)
 {
+    app_uart_run();
+    app_sensor_run();
     app_led_run();
     encoder_debug_run();
     oled_show_motor_closed_loop_status();

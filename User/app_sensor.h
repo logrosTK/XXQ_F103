@@ -10,4 +10,6 @@
 
 void app_sensor_init(void);
 void app_sensor_run(void);
+uint32_t app_sensor_get_ultrasonic_distance_x100(void);
+uint8_t app_sensor_is_ultrasonic_distance_valid(void);
 #endif

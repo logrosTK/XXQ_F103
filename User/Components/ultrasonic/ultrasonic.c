@@ -13,6 +13,8 @@
 
 #include "ultrasonic/ultrasonic.h"
 
+#define ULTRASONIC_MEASURE_WAIT_MS 100U
+
 
 /*
  * 函数名称: ultrasonic_i2c_delay
@@ -376,5 +378,57 @@ float ultrasonic_read_distance(void)
 	ultrasonic_i2c_stop();
 	distance=(value_H<<8|value_L)* 0.017;
 	return distance;
+}
+
+/*
+ * 函数名称: ultrasonic_measure_once
+ * 功能描述: 执行一次完整超声波测距
+ * 参数说明: distance_cm - 输出的距离值指针，单位cm
+ * 返回值:   1 - 测距成功
+ *           0 - 参数无效或I2C通信失败
+ */
+uint8_t ultrasonic_measure_once(float *distance_cm)
+{
+    if (distance_cm == NULL)
+    {
+        return 0;
+    }
+
+    if (!ultrasonic_start_measuring())
+    {
+        return 0;
+    }
+
+    delay_ms(ULTRASONIC_MEASURE_WAIT_MS);
+    *distance_cm = ultrasonic_read_distance();
+
+    return 1;
+}
+
+/*
+ * 函数名称: ultrasonic_self_test
+ * 功能描述: 执行设备检测、点亮探头RGB并读取一次距离
+ * 参数说明: distance_cm - 输出的距离值指针，单位cm
+ * 返回值:   1 - 自检成功
+ *           0 - 自检失败
+ */
+uint8_t ultrasonic_self_test(float *distance_cm)
+{
+    if (!ultrasonic_Init())
+    {
+        return 0;
+    }
+
+    if (!ultrasonic_rgb_r(0, 255, 0))
+    {
+        return 0;
+    }
+
+    if (!ultrasonic_rgb_t(0, 255, 0))
+    {
+        return 0;
+    }
+
+    return ultrasonic_measure_once(distance_cm);
 }
 

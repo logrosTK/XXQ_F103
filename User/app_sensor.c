@@ -22,6 +22,71 @@
 // */
 #include "app_sensor.h"
 
+#define ULTRASONIC_DEBUG_PERIOD_MS 500U
+
+static uint32_t g_ultrasonic_distance_x100 = 0U;
+static uint8_t g_ultrasonic_distance_valid = 0U;
+
+static uint32_t ultrasonic_distance_to_x100(float distance_cm)
+{
+    if (distance_cm <= 0.0f)
+    {
+        return 0U;
+    }
+
+    return (uint32_t)(distance_cm * 100.0f + 0.5f);
+}
+
+static void ultrasonic_debug_log(const char *message)
+{
+    printf("%s", message);
+    uart2_send_str((char *)message);
+}
+
+static void ultrasonic_periodic_debug_run(void)
+{
+    static u32 last_debug_ms = 0;
+    char message[96];
+    float distance_cm = 0.0f;
+    uint32_t distance_x100 = 0;
+    u32 now = millis();
+
+    if ((now - last_debug_ms) < ULTRASONIC_DEBUG_PERIOD_MS)
+    {
+        return;
+    }
+
+    last_debug_ms = now;
+
+    if (ultrasonic_measure_once(&distance_cm))
+    {
+        distance_x100 = ultrasonic_distance_to_x100(distance_cm);
+        g_ultrasonic_distance_x100 = distance_x100;
+        g_ultrasonic_distance_valid = 1U;
+        snprintf(message, sizeof(message), "ultrasonic: %lu.%02lu cm\r\n",
+                 (unsigned long)(distance_x100 / 100U),
+                 (unsigned long)(distance_x100 % 100U));
+    }
+    else
+    {
+        g_ultrasonic_distance_x100 = 0U;
+        g_ultrasonic_distance_valid = 0U;
+        snprintf(message, sizeof(message), "ultrasonic: read failed\r\n");
+    }
+
+    ultrasonic_debug_log(message);
+}
+
+uint32_t app_sensor_get_ultrasonic_distance_x100(void)
+{
+    return g_ultrasonic_distance_x100;
+}
+
+uint8_t app_sensor_is_ultrasonic_distance_valid(void)
+{
+    return g_ultrasonic_distance_valid;
+}
+
 /** 前向声明：各AI模式函数 */
 static void AI_xunji_moshi(void);
 void AI_ziyou_bizhang(void);
@@ -49,14 +114,15 @@ int T_cross = 0, flag_F, forbid_F;
 void app_sensor_init(void)
 {
     TRACK_IR4_Init();
+    soft_i2c_gpio_init();
 
     if (ultrasonic_Init())
     {
-        printf("\nultrasonic_Init succeed\n");
+        ultrasonic_debug_log("ultrasonic_Init succeed\r\n");
     }
     else
     {
-        printf("\nultrasonic_Init fail\n");
+        ultrasonic_debug_log("ultrasonic_Init fail\r\n");
     }
 
     ultrasonic_rgb_r(0, 255, 0);
@@ -75,6 +141,8 @@ void app_sensor_init(void)
 void app_sensor_run(void)
 {
     static u8 AI_mode_bak;
+
+    ultrasonic_periodic_debug_run();
 
     if (group_do_ok == 0)
         return;
