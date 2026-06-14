@@ -23,9 +23,189 @@
 #include "app_sensor.h"
 
 #define ULTRASONIC_DEBUG_PERIOD_MS 500U
+#define TRACKING_BASE_SPEED_NORMAL 0.16f
+#define TRACKING_BASE_SPEED_PRO 0.20f
+#define TRACKING_MAX_SPEED 0.32f
+#define TRACKING_TURN_GAIN_NORMAL 0.012f
+#define TRACKING_TURN_GAIN_PRO 0.015f
+#define TRACKING_CROSS_PASS_SPEED 0.16f
+#define TRACKING_RECOVERY_SPEED_INNER 0.03f
+#define TRACKING_RECOVERY_SPEED_OUTER 0.22f
+#define TRACKING_CROSS_ACTION_1 ""
+#define TRACKING_CROSS_ACTION_2 ""
 
 static uint32_t g_ultrasonic_distance_x100 = 0U;
 static uint8_t g_ultrasonic_distance_valid = 0U;
+static uint8_t g_tracking_cross_hold = 0U;
+
+extern uint8_t xunji_mode;
+extern int T_cross;
+
+static float app_sensor_clamp_speed(float value, float min_value, float max_value)
+{
+    if (value < min_value)
+    {
+        return min_value;
+    }
+
+    if (value > max_value)
+    {
+        return max_value;
+    }
+
+    return value;
+}
+
+static void app_sensor_set_track_speed(float left_speed, float right_speed)
+{
+    motor_speed_set(left_speed, right_speed, left_speed, right_speed);
+}
+
+static uint8_t app_sensor_tracking_fetch(uint8_t *tracking_data)
+{
+    if ((tracking_data == 0) || (!tracking_copy_digital(tracking_data, TRACKING_CHANNEL_COUNT)) || (!tracking_is_online()))
+    {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+static uint8_t app_sensor_tracking_has_main_line(const uint8_t *tracking_data)
+{
+    return (uint8_t)((tracking_data[2] == 0U) || (tracking_data[3] == 0U) ||
+                     (tracking_data[4] == 0U) || (tracking_data[5] == 0U));
+}
+
+static uint8_t app_sensor_tracking_is_cross_pattern(const uint8_t *tracking_data)
+{
+    uint8_t index;
+    uint8_t black_count = 0U;
+
+    for (index = 0; index < TRACKING_CHANNEL_COUNT; index++)
+    {
+        if (tracking_data[index] == 0U)
+        {
+            black_count++;
+        }
+    }
+
+    if (black_count >= 6U)
+    {
+        return 1U;
+    }
+
+    return (uint8_t)((tracking_data[1] == 0U) && (tracking_data[2] == 0U) &&
+                     (tracking_data[3] == 0U) && (tracking_data[4] == 0U) &&
+                     (tracking_data[5] == 0U) && (tracking_data[6] == 0U));
+}
+
+static void app_sensor_tracking_run_cross_action(uint8_t cross_index)
+{
+    const char *action_cmd = 0;
+
+    if (cross_index == 1U)
+    {
+        action_cmd = TRACKING_CROSS_ACTION_1;
+    }
+    else if (cross_index == 2U)
+    {
+        action_cmd = TRACKING_CROSS_ACTION_2;
+    }
+
+    if ((action_cmd == 0) || (action_cmd[0] == '\0'))
+    {
+        return;
+    }
+
+    memset(cmd_return, 0, sizeof(cmd_return));
+    strncpy(cmd_return, action_cmd, CMD_RETURN_SIZE - 1U);
+    parse_cmd(cmd_return);
+}
+
+static void app_sensor_tracking_reset_cross_state(void)
+{
+    T_cross = 0;
+    g_tracking_cross_hold = 0U;
+}
+
+static void app_sensor_tracking_follow_with_data(const uint8_t *tracking_data, uint8_t aggressive)
+{
+    static const int8_t weights[TRACKING_CHANNEL_COUNT] = {-7, -5, -3, -1, 1, 3, 5, 7};
+    static int8_t last_error = 0;
+    uint8_t index;
+    uint8_t black_count = 0;
+    int32_t weighted_sum = 0;
+    int8_t error = 0;
+    float base_speed;
+    float turn_gain;
+    float left_speed;
+    float right_speed;
+
+    if ((tracking_data[0] == 0U) && (tracking_data[1] == 0U) && (tracking_data[2] == 0U) &&
+        (tracking_data[3] == 0U) && (tracking_data[4] == 1U) && (tracking_data[5] == 1U) &&
+        (tracking_data[6] == 1U) && (tracking_data[7] == 1U))
+    {
+        error = -15;
+    }
+    else if ((tracking_data[0] == 1U) && (tracking_data[1] == 1U) && (tracking_data[2] == 1U) &&
+             (tracking_data[3] == 1U) && (tracking_data[4] == 0U) && (tracking_data[5] == 0U) &&
+             (tracking_data[6] == 0U) && (tracking_data[7] == 0U))
+    {
+        error = 15;
+    }
+    else if ((tracking_data[0] == 0U) && (tracking_data[7] == 0U))
+    {
+        error = 0;
+    }
+    else
+    {
+        for (index = 0; index < TRACKING_CHANNEL_COUNT; index++)
+        {
+            if (tracking_data[index] == 0U)
+            {
+                black_count++;
+                weighted_sum += weights[index];
+            }
+        }
+
+        if (black_count == 0U)
+        {
+            if (last_error < 0)
+            {
+                app_sensor_set_track_speed(TRACKING_RECOVERY_SPEED_INNER, TRACKING_RECOVERY_SPEED_OUTER);
+            }
+            else
+            {
+                app_sensor_set_track_speed(TRACKING_RECOVERY_SPEED_OUTER, TRACKING_RECOVERY_SPEED_INNER);
+            }
+            return;
+        }
+
+        error = (int8_t)(weighted_sum / (int32_t)black_count);
+    }
+
+    last_error = error;
+    base_speed = aggressive ? TRACKING_BASE_SPEED_PRO : TRACKING_BASE_SPEED_NORMAL;
+    turn_gain = aggressive ? TRACKING_TURN_GAIN_PRO : TRACKING_TURN_GAIN_NORMAL;
+
+    left_speed = app_sensor_clamp_speed(base_speed + turn_gain * (float)error, 0.0f, TRACKING_MAX_SPEED);
+    right_speed = app_sensor_clamp_speed(base_speed - turn_gain * (float)error, 0.0f, TRACKING_MAX_SPEED);
+    app_sensor_set_track_speed(left_speed, right_speed);
+}
+
+static void app_sensor_tracking_follow_run(uint8_t aggressive)
+{
+    uint8_t tracking_data[TRACKING_CHANNEL_COUNT];
+
+    if (!app_sensor_tracking_fetch(tracking_data))
+    {
+        app_sensor_set_track_speed(0.0f, 0.0f);
+        return;
+    }
+
+    app_sensor_tracking_follow_with_data(tracking_data, aggressive);
+}
 
 static uint32_t ultrasonic_distance_to_x100(float distance_cm)
 {
@@ -43,34 +223,58 @@ static void ultrasonic_debug_log(const char *message)
     uart2_send_str((char *)message);
 }
 
+uint8_t app_sensor_refresh_ultrasonic_distance(void)
+{
+    float distance_cm = 0.0f;
+
+    if (ultrasonic_measure_once(&distance_cm))
+    {
+        g_ultrasonic_distance_x100 = ultrasonic_distance_to_x100(distance_cm);
+        g_ultrasonic_distance_valid = 1U;
+        return 1U;
+    }
+
+    g_ultrasonic_distance_x100 = 0U;
+    g_ultrasonic_distance_valid = 0U;
+    return 0U;
+}
+
 static void ultrasonic_periodic_debug_run(void)
 {
     static u32 last_debug_ms = 0;
     char message[96];
-    float distance_cm = 0.0f;
-    uint32_t distance_x100 = 0;
     u32 now = millis();
+    uint32_t period_ms;
 
-    if ((now - last_debug_ms) < ULTRASONIC_DEBUG_PERIOD_MS)
+    period_ms = app_uart_is_ultrasonic_log_enabled() ?
+                    app_uart_get_ultrasonic_log_period_ms() :
+                    ULTRASONIC_DEBUG_PERIOD_MS;
+
+    if ((now - last_debug_ms) < period_ms)
     {
         return;
     }
 
     last_debug_ms = now;
 
-    if (ultrasonic_measure_once(&distance_cm))
+    if (app_sensor_refresh_ultrasonic_distance())
     {
-        distance_x100 = ultrasonic_distance_to_x100(distance_cm);
-        g_ultrasonic_distance_x100 = distance_x100;
-        g_ultrasonic_distance_valid = 1U;
+        if (!app_uart_is_ultrasonic_log_enabled())
+        {
+            return;
+        }
+
         snprintf(message, sizeof(message), "ultrasonic: %lu.%02lu cm\r\n",
-                 (unsigned long)(distance_x100 / 100U),
-                 (unsigned long)(distance_x100 % 100U));
+                 (unsigned long)(g_ultrasonic_distance_x100 / 100U),
+                 (unsigned long)(g_ultrasonic_distance_x100 % 100U));
     }
     else
     {
-        g_ultrasonic_distance_x100 = 0U;
-        g_ultrasonic_distance_valid = 0U;
+        if (!app_uart_is_ultrasonic_log_enabled())
+        {
+            return;
+        }
+
         snprintf(message, sizeof(message), "ultrasonic: read failed\r\n");
     }
 
@@ -85,6 +289,36 @@ uint32_t app_sensor_get_ultrasonic_distance_x100(void)
 uint8_t app_sensor_is_ultrasonic_distance_valid(void)
 {
     return g_ultrasonic_distance_valid;
+}
+
+uint8_t app_sensor_get_tracking_state(uint8_t *buffer, uint8_t buffer_len)
+{
+    return tracking_copy_digital(buffer, buffer_len);
+}
+
+uint8_t app_sensor_get_tracking_mask(void)
+{
+    return tracking_get_digital_mask();
+}
+
+uint8_t app_sensor_is_tracking_online(void)
+{
+    return tracking_is_online();
+}
+
+uint8_t app_sensor_get_tracking_cross_count(void)
+{
+    return (uint8_t)T_cross;
+}
+
+uint8_t app_sensor_get_tracking_cross_hold(void)
+{
+    return g_tracking_cross_hold;
+}
+
+uint8_t app_sensor_get_tracking_mode(void)
+{
+    return xunji_mode;
 }
 
 /** 前向声明：各AI模式函数 */
@@ -113,7 +347,8 @@ int T_cross = 0, flag_F, forbid_F;
  */
 void app_sensor_init(void)
 {
-    TRACK_IR4_Init();
+    app_sensor_tracking_reset_cross_state();
+    tracking_init();
     soft_i2c_gpio_init();
 
     if (ultrasonic_Init())
@@ -142,6 +377,7 @@ void app_sensor_run(void)
 {
     static u8 AI_mode_bak;
 
+    tracking_run();
     ultrasonic_periodic_debug_run();
 
     if (group_do_ok == 0)
@@ -172,6 +408,11 @@ void app_sensor_run(void)
 
     if (AI_mode_bak != AI_mode)
     {
+        if ((AI_mode_bak == 1U) && (AI_mode != 1U))
+        {
+            app_sensor_tracking_reset_cross_state();
+        }
+
         AI_mode_bak = AI_mode;
         group_do_ok = 1;
     }
@@ -196,89 +437,82 @@ void app_sensor_run(void)
  */
 static void AI_xunji_moshi(void)
 {
-    uint8_t IR_X3, IR_X2, IR_X4, IR_X1;
-    static uint8_t cross_flag = 0, state = 0, cross = 0;
+    static uint8_t cross_flag = 0U;
+    static uint8_t cross_state = 0U;
+    static uint8_t cross_cycle = 0U;
+    uint8_t tracking_data[TRACKING_CHANNEL_COUNT];
 
-    IR_X3 = TRTACK_IR4_X3_READ();
-    IR_X2 = TRTACK_IR4_X2_READ();
-    IR_X1 = TRTACK_IR4_X1_READ();
-    IR_X4 = TRTACK_IR4_X4_READ();
-    // printf("%d  %d  %d  %d \r\n",IR_X1,IR_X2,IR_X3,IR_X4);
-
-    /**********其中三个参数，state包含循迹状态与十字路口的三种状态
-     * 0：普通循迹模式
-     * 1：第一次遇到十字路口
-     * 2：第二次遇到十字路口
-     * 3：第三次遇到十字路口
-     * cross是state在case 0中遇到十字路口第几次的标志位
-     * cross_flag则是十字路口执行完成后的标志位
-     **************************************/
-    if (cross_flag == 1)
+    if (!app_sensor_tracking_fetch(tracking_data))
     {
-        // 前进
-        motor_speed_set(0.2, 0.2, 0.2, 0.2);
-        if (IR_X1 == 1 || IR_X4 == 1)
-            cross_flag = 0;
+        app_sensor_set_track_speed(0.0f, 0.0f);
+        return;
     }
 
-    switch (state)
-    {
-    case 0:
-        if (IR_X3 == 0 && IR_X2 == 0 && IR_X1 == 1 && IR_X4 == 1)
-        {
-            // 前进
-            motor_speed_set(0.1, 0.1, 0.1, 0.1);
-        }
-        else if ((IR_X3 == 0 && IR_X2 == 1) || (IR_X2 == 1 && IR_X4 == 0 && IR_X1 == 1))
-        {
-            /* 右边出去，左转 */
-            motor_speed_set(0, 0.1, 0, 0.1);
-        }
-        else if ((IR_X3 == 1 && IR_X2 == 0) || (IR_X3 == 1 && IR_X4 == 1 && IR_X1 == 0))
-        {
-            // 右转
-            motor_speed_set(0.1, 0, 0.1, 0);
-        }
-        else if (IR_X3 == 0 && IR_X2 == 0 && IR_X1 == 0 && IR_X4 == 0 && (cross_flag == 0))
-        {
+    g_tracking_cross_hold = cross_flag;
 
-            motor_speed_set(0, 0, 0, 0);
-            if (cross == 0)
-                state = 1;
-            else if (cross == 1)
-                state = 2;
-            else if (cross == 2)
-                state = 3;
-        }
-        break;
-    case 1:
-        if (AI_mode == 1)
+    if (cross_flag == 1U)
+    {
+        app_sensor_set_track_speed(TRACKING_CROSS_PASS_SPEED, TRACKING_CROSS_PASS_SPEED);
+        if ((!app_sensor_tracking_is_cross_pattern(tracking_data)) && app_sensor_tracking_has_main_line(tracking_data))
         {
-            // sprintf(cmd_return, "$DGT:%d-%d,%d!", 9, 17, 1); // 打印字符串到数组中
-            // parse_cmd(cmd_return);   // 解析动作组
+            cross_flag = 0U;
+            g_tracking_cross_hold = 0U;
         }
-        state = 0;
-        cross = 1;
-        cross_flag = 1;
+        return;
+    }
+
+    if (app_sensor_tracking_is_cross_pattern(tracking_data))
+    {
+        motor_speed_set(0.0f, 0.0f, 0.0f, 0.0f);
+        if (cross_cycle == 0U)
+        {
+            cross_state = 1U;
+        }
+        else if (cross_cycle == 1U)
+        {
+            cross_state = 2U;
+        }
+        else
+        {
+            cross_state = 3U;
+        }
+    }
+    else
+    {
+        app_sensor_tracking_follow_with_data(tracking_data, 0U);
+    }
+
+    switch (cross_state)
+    {
+    case 1:
+        T_cross = 1;
+        app_sensor_tracking_run_cross_action(1U);
+        cross_state = 0U;
+        cross_cycle = 1U;
+        cross_flag = 1U;
+        g_tracking_cross_hold = 1U;
         break;
     case 2:
-        if (AI_mode == 1)
-        {
-            // sprintf(cmd_return, "$DGT:%d-%d,%d!", 9, 17, 1); // 打印字符串到数组中
-            // parse_cmd(cmd_return);   // 解析动作组
-        }
-        state = 0;
-        cross = 2;
-        cross_flag = 1;
+        T_cross = 2;
+        app_sensor_tracking_run_cross_action(2U);
+        cross_state = 0U;
+        cross_cycle = 2U;
+        cross_flag = 1U;
+        g_tracking_cross_hold = 1U;
         break;
     case 3:
-        state = 0;
-        cross = 0;
-        cross_flag = 0;
+        T_cross = 3;
+        cross_state = 0U;
+        cross_cycle = 0U;
+        cross_flag = 0U;
+        g_tracking_cross_hold = 0U;
+        motor_speed_set(0.0f, 0.0f, 0.0f, 0.0f);
         if (AI_mode == 1)
         {
             AI_mode = 255;
         }
+        break;
+    default:
         break;
     }
 }
@@ -301,108 +535,7 @@ static void AI_xunji_moshi(void)
  */
 static void AI_xunji_moshi_pro(void)
 {
-    IR_X3 = TRTACK_IR4_X3_READ();
-    IR_X2 = TRTACK_IR4_X2_READ();
-    IR_X1 = TRTACK_IR4_X1_READ();
-    IR_X4 = TRTACK_IR4_X4_READ();
-
-    //	 printf("%d  %d  %d  %d",IR_X1,IR_X2,IR_X3,IR_X4);
-    //	delay_ms(2000);
-
-    /**********其中三个参数，trackState表示直角或锐角转弯时的三种状态
-     * 0：普通循迹模式
-     * 1：左转情况，当小车遇到角度较小等复杂路况，则一直左转直至电平变为直走电平（1001）时才恢复正常
-     * 2：右转情况，当小车遇到角度较小等复杂路况，则一直右转直至电平变为直走电平（1001）时才恢复正常
-     * flag_F是为了限制在S弯行进时X4探头频繁切换状态
-     * forbid_turn用于适配地图，当遇到第1和第3个T字路口时都不会转弯而是直走
-     * 用户在使用过程中，可通过调整IX\IY\IW三个值而达到好的循迹效果
-     * 尽量避免使用delay_ms函数，会造成程序异常
-     **************************************/
-    switch (trackState)
-    {
-    case 0:
-        if ((IR_X1 == 1 && IR_X2 == 1 && IR_X3 == 1 && IR_X4 == 1 && flag_F != 1))
-        {
-            motor_speed_set(0.4, 0, 0.4, 0);
-        }
-        if ((IR_X1 == 1 && IR_X2 == 0 && IR_X3 == 0 && IR_X4 == 1))
-        {
-            // 四路传感器都检测到黑线，前进
-            motor_speed_set(0.2, 0.2, 0.2, 0.2);
-            flag_F = 0;
-            forbid_F = 0;
-
-            if (forbid_turn == 1 || forbid_turn == 4)
-            {
-                forbid_turn = 2;
-            }
-        }
-        else if (IR_X1 == 1 && IR_X2 == 0 && IR_X3 == 0 && IR_X4 == 0)
-        {
-            // 左大弯
-            motor_speed_set(0.05, 0.4, 0.05, 0.4);
-            trackState = 1;
-        }
-        else if (IR_X1 == 0 && IR_X2 == 0 && IR_X3 == 0 && IR_X4 == 1)
-        {
-            if (forbid_turn == 0)
-            {
-                motor_speed_set(0.2, 0.2, 0.2, 0.2);
-                forbid_turn = 1;
-            }
-            else if (forbid_turn == 3)
-            {
-
-                motor_speed_set(0.2, 0.2, 0.2, 0.2);
-                forbid_turn = 4;
-            }
-            else if (forbid_turn != 0 && forbid_turn != 1 && forbid_turn != 4)
-            {
-                // 右大弯
-                motor_speed_set(0.4, 0.05, 0.4, 0.05);
-                trackState = 2;
-            }
-        }
-        else if (IR_X4 == 0 && forbid_F != 1)
-        {
-            // 左最外侧检测
-            motor_speed_set(0.1, 1, 0.1, 1);
-            flag_F = 1;
-        }
-        else if (IR_X1 == 0)
-        {
-            // 右最外侧检测
-            motor_speed_set(1, 0.1, 1, 0.1);
-        }
-        else if (IR_X1 == 1 && IR_X2 == 1 && IR_X3 == 0 && IR_X4 == 1)
-        {
-            // 中间黑线上的传感器微调车左转
-            motor_speed_set(0.2, 0.4, 0.2, 0.4);
-        }
-        else if (IR_X1 == 1 && IR_X2 == 0 && IR_X3 == 1 && IR_X4 == 1)
-        {
-            // 中间黑线上的传感器微调车右转
-            motor_speed_set(0.4, 0.2, 0.4, 0.2);
-        }
-        break;
-    case 1:
-        motor_speed_set(0.08, 0.58, 0.08, 0.58);
-        if (IR_X1 == 1 && IR_X2 == 0 && IR_X3 == 0 && IR_X4 == 1)
-        {
-            trackState = 0;
-            forbid_F = 1;
-            delay_ms(200);
-        }
-        break;
-    case 2:
-        motor_speed_set(0.58, 0.08, 0.58, 0.08);
-        if (IR_X1 == 1 && IR_X2 == 0 && IR_X3 == 0 && IR_X4 == 1)
-        {
-            delay_ms(200);
-            trackState = 0;
-            forbid_turn = 3;
-        }
-    }
+    app_sensor_tracking_follow_run(1U);
 }
 
 

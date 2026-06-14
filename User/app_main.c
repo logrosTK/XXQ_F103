@@ -18,6 +18,17 @@
 #define MOTOR_STATUS_PERIOD_MS 3000U
 #define OLED_STATUS_PERIOD_MS 500U
 #define OLED_LINE_CHARS 21U
+#define OLED_TRACK_PAGE_PERIOD_MS 120U
+#define OLED_PAGE_COUNT 2U
+#define OLED_KEY_DEBOUNCE_MS 10U
+#define OLED_TRACK_DOT_X0 16U
+#define OLED_TRACK_DOT_X_STEP 24U
+#define OLED_TRACK_DOT_ROW0 1U
+#define OLED_TRACK_DOT_ROW1 4U
+
+static const uint8_t g_oled_track_dot_on[8] = {0x00, 0x1C, 0x3E, 0x7F, 0x7F, 0x3E, 0x1C, 0x00};
+static const uint8_t g_oled_track_dot_off[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static uint8_t g_oled_page_index = 0U;
 
 static int32_t oled_float_to_x10(float value)
 {
@@ -53,6 +64,51 @@ static void oled_show_line(uint8_t y, const char *text)
     OLED_P6x8Str(0, y, (uint8_t *)line);
 }
 
+static void oled_draw_bitmap8(uint8_t x, uint8_t y_page, const uint8_t *bitmap)
+{
+    uint8_t index;
+
+    OLED_Set_Pos(x, y_page);
+    for (index = 0; index < 8U; index++)
+    {
+        OLED_Write_Dat(bitmap[index]);
+    }
+}
+
+static uint8_t oled_poll_page_key(void)
+{
+    static uint8_t last_level = 1U;
+    static uint8_t key_locked = 0U;
+    static u32 debounce_ms = 0U;
+    uint8_t key_level = KEY_GET_LEVEL();
+    u32 now = millis();
+
+    if (key_level != last_level)
+    {
+        last_level = key_level;
+        debounce_ms = now;
+    }
+
+    if ((now - debounce_ms) < OLED_KEY_DEBOUNCE_MS)
+    {
+        return 0U;
+    }
+
+    if ((key_level == 0U) && (key_locked == 0U))
+    {
+        key_locked = 1U;
+        g_oled_page_index = (uint8_t)((g_oled_page_index + 1U) % OLED_PAGE_COUNT);
+        return 1U;
+    }
+
+    if (key_level != 0U)
+    {
+        key_locked = 0U;
+    }
+
+    return 0U;
+}
+
 static void motor_control_stop(void)
 {
     app_motor_set_closed_loop(0);
@@ -63,14 +119,17 @@ static void motor_control_stop(void)
 static void encoder_debug_run(void)
 {
     static u32 last_print_ms = 0;
+    uint32_t period_ms;
     u32 now = millis();
 
-    if (!app_motor_get_closed_loop())
+    if ((!app_motor_get_closed_loop()) || (!app_uart_is_motor_log_enabled()))
     {
         return;
     }
 
-    if ((now - last_print_ms) < MOTOR_STATUS_PERIOD_MS)
+    period_ms = app_uart_get_motor_log_period_ms();
+
+    if ((now - last_print_ms) < period_ms)
     {
         return;
     }
@@ -221,7 +280,7 @@ void OLED_Show_Motor_Speed(void)
     oled_show_line(7, "");
 }
 
-static void oled_show_motor_closed_loop_status(void)
+static void oled_show_motor_closed_loop_status(uint8_t force_refresh)
 {
     char text[64];
     int32_t kp10;
@@ -230,7 +289,7 @@ static void oled_show_motor_closed_loop_status(void)
     uint32_t ultrasonic_x100;
     static u32 time_count = 0;
 
-    if (millis() - time_count < OLED_STATUS_PERIOD_MS)
+    if ((!force_refresh) && (millis() - time_count < OLED_STATUS_PERIOD_MS))
         return;
 
     time_count = millis();
@@ -286,11 +345,62 @@ static void oled_show_motor_closed_loop_status(void)
     oled_show_line(7, text);
 }
 
+static void oled_show_tracking_status(uint8_t force_refresh)
+{
+    static u32 time_count = 0;
+    uint8_t tracking_data[TRACKING_CHANNEL_COUNT];
+    uint8_t index;
+    uint8_t x;
+    uint8_t y_page;
+
+    if ((!force_refresh) && (millis() - time_count < OLED_TRACK_PAGE_PERIOD_MS))
+    {
+        return;
+    }
+
+    time_count = millis();
+
+    if (force_refresh)
+    {
+        OLED_CLS();
+    }
+
+    if (!app_sensor_get_tracking_state(tracking_data, TRACKING_CHANNEL_COUNT))
+    {
+        for (index = 0; index < TRACKING_CHANNEL_COUNT; index++)
+        {
+            tracking_data[index] = 1U;
+        }
+    }
+
+    for (index = 0; index < TRACKING_CHANNEL_COUNT; index++)
+    {
+        x = (uint8_t)(OLED_TRACK_DOT_X0 + (index % 4U) * OLED_TRACK_DOT_X_STEP);
+        y_page = (index < 4U) ? OLED_TRACK_DOT_ROW0 : OLED_TRACK_DOT_ROW1;
+        oled_draw_bitmap8(x, y_page,
+                          tracking_data[index] == 0U ? g_oled_track_dot_off : g_oled_track_dot_on);
+    }
+}
+
+static void oled_run(void)
+{
+    uint8_t force_refresh = oled_poll_page_key();
+
+    if (g_oled_page_index == 0U)
+    {
+        oled_show_motor_closed_loop_status(force_refresh);
+        return;
+    }
+
+    oled_show_tracking_status(force_refresh);
+}
+
 void app_init(void)
 {
     SysTick_Init();
     SWJ_gpio_init();
     led_init();
+    key_init();
     LED_ON();
     app_uart_init();
     OLED_Init();
@@ -316,6 +426,7 @@ void app_init(void)
     printf("\r\nMotor closed-loop ready.\r\n");
     printf("USART1: 115200 8N1, TX=PA9, RX=PA10.\r\n");
     printf("Use motor_speed_set(A,B,C,D) and app_motor_set_closed_loop(1) to run.\r\n");
+    printf("Send $HELP! to list serial debug commands.\r\n");
     printf("Mapping: A=LF B=RF C=RR D=LR. PID period=%d ms, log period=%lu ms\r\n",
            1000 / PID_RATE,
            (unsigned long)MOTOR_STATUS_PERIOD_MS);
@@ -327,5 +438,5 @@ void app_loop(void)
     app_sensor_run();
     app_led_run();
     encoder_debug_run();
-    oled_show_motor_closed_loop_status();
+    oled_run();
 }

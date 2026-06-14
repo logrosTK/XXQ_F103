@@ -37,6 +37,7 @@ u8 group_do_ok = 1;
 u8 AI_mode = 255;
 /** 循迹模式地图适配标志 */
 u8 forbid_turn = 0;
+extern uint8_t xunji_mode;
 
 /** 控制板EEPROM存储信息结构体 */
 eeprom_info_t eeprom_info;
@@ -71,6 +72,236 @@ void soft_reset(void)
     printf("stm32 reset\r\n");
     __set_FAULTMASK(1);
     NVIC_SystemReset();
+}
+
+static void debug_stop_all_motion(void)
+{
+    AI_mode = 255;
+    app_motor_set_closed_loop(0);
+    motor_speed_set(0.0f, 0.0f, 0.0f, 0.0f);
+    app_motor_run();
+}
+
+static void debug_set_manual_speed(float a, float b, float c, float d, uint8_t enable_closed_loop)
+{
+    AI_mode = 255;
+    motor_speed_set(a, b, c, d);
+    if (enable_closed_loop)
+    {
+        app_motor_set_closed_loop(1);
+    }
+}
+
+static void debug_enter_ai_mode(uint8_t mode, uint8_t tracking_mode)
+{
+    AI_mode = mode;
+    if (mode == 1U)
+    {
+        xunji_mode = tracking_mode;
+    }
+    app_motor_set_closed_loop(1);
+}
+
+static void uart_reply_ok(const char *message)
+{
+    if ((message != 0) && (message[0] != '\0'))
+    {
+        printf("@OK %s\r\n", message);
+        return;
+    }
+
+    printf("@OK\r\n");
+}
+
+static void uart_reply_err(const char *message)
+{
+    if ((message != 0) && (message[0] != '\0'))
+    {
+        printf("@ERR %s\r\n", message);
+        return;
+    }
+
+    printf("@ERR\r\n");
+}
+
+static uint8_t parse_decimal_float(const char *text, const char **end_ptr, float *value)
+{
+    const char *cursor = text;
+    float integer_part = 0.0f;
+    float fraction_part = 0.0f;
+    float fraction_scale = 1.0f;
+    float sign = 1.0f;
+    uint8_t has_digit = 0U;
+
+    if ((cursor == 0) || (value == 0) || (end_ptr == 0))
+    {
+        return 0U;
+    }
+
+    if (*cursor == '+')
+    {
+        cursor++;
+    }
+    else if (*cursor == '-')
+    {
+        sign = -1.0f;
+        cursor++;
+    }
+
+    while ((*cursor >= '0') && (*cursor <= '9'))
+    {
+        integer_part = integer_part * 10.0f + (float)(*cursor - '0');
+        cursor++;
+        has_digit = 1U;
+    }
+
+    if (*cursor == '.')
+    {
+        cursor++;
+        while ((*cursor >= '0') && (*cursor <= '9'))
+        {
+            fraction_part = fraction_part * 10.0f + (float)(*cursor - '0');
+            fraction_scale *= 10.0f;
+            cursor++;
+            has_digit = 1U;
+        }
+    }
+
+    if (!has_digit)
+    {
+        return 0U;
+    }
+
+    *value = sign * (integer_part + fraction_part / fraction_scale);
+    *end_ptr = cursor;
+    return 1U;
+}
+
+static uint8_t parse_float_list4_command(const char *cmd, const char *prefix,
+                                         float *value0, float *value1, float *value2, float *value3)
+{
+    const char *cursor = cmd;
+
+    if ((cmd == 0) || (prefix == 0) || (value0 == 0) || (value1 == 0) || (value2 == 0) || (value3 == 0))
+    {
+        return 0U;
+    }
+
+    while (*prefix != '\0')
+    {
+        if (*cursor != *prefix)
+        {
+            return 0U;
+        }
+        cursor++;
+        prefix++;
+    }
+
+    if (!parse_decimal_float(cursor, &cursor, value0) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, value1) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, value2) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, value3) || (*cursor != '!') || (cursor[1] != '\0'))
+    {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+static uint8_t parse_float_list3_command(const char *cmd, const char *prefix,
+                                         float *value0, float *value1, float *value2)
+{
+    const char *cursor = cmd;
+
+    if ((cmd == 0) || (prefix == 0) || (value0 == 0) || (value1 == 0) || (value2 == 0))
+    {
+        return 0U;
+    }
+
+    while (*prefix != '\0')
+    {
+        if (*cursor != *prefix)
+        {
+            return 0U;
+        }
+        cursor++;
+        prefix++;
+    }
+
+    if (!parse_decimal_float(cursor, &cursor, value0) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, value1) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, value2) || (*cursor != '!') || (cursor[1] != '\0'))
+    {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+static uint8_t parse_kms_command(const char *cmd, float *x, float *y, float *z, int *time_ms)
+{
+    const char *cursor = cmd;
+
+    if ((cmd == 0) || (x == 0) || (y == 0) || (z == 0) || (time_ms == 0))
+    {
+        return 0U;
+    }
+
+    if (strncmp(cursor, "$KMS:", 5) != 0)
+    {
+        return 0U;
+    }
+    cursor += 5;
+
+    if (!parse_decimal_float(cursor, &cursor, x) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, y) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (!parse_decimal_float(cursor, &cursor, z) || (*cursor != ','))
+    {
+        return 0U;
+    }
+    cursor++;
+
+    if (sscanf(cursor, "%d!", time_ms) != 1)
+    {
+        return 0U;
+    }
+
+    return 1U;
 }
 
 /*
@@ -373,48 +604,267 @@ void save_action(char *str)
 void parse_cmd(char *cmd)
 {
     int pos = 0, index = 0, int1 = 0, int4 = 0;
+    uint8_t handled = 0U;
     float kinematics_x = 0, kinematics_y = 0, kinematics_z = 0;
     int mode_num;
     const unsigned char *display_chars;
     int num_chars;
 
-    uart1_send_str(cmd);
     if (pos = str_contain_str(cmd, "$DRS!"), pos)
     {
+        handled = 1U;
         uart1_send_str("hello word!");
+        uart_reply_ok("DRS");
+    }
+    else if (pos = str_contain_str(cmd, "$HELP!"), pos)
+    {
+        handled = 1U;
+        app_uart_print_help();
+        uart_reply_ok("HELP");
+    }
+    else if (pos = str_contain_str(cmd, "$STATUS!"), pos)
+    {
+        handled = 1U;
+        (void)app_sensor_refresh_ultrasonic_distance();
+        app_uart_print_status();
+        uart_reply_ok("STATUS");
+    }
+    else if (pos = str_contain_str(cmd, "$PID:GET!"), pos)
+    {
+        handled = 1U;
+        app_uart_print_pid();
+        uart_reply_ok("PID GET");
+    }
+    else if (pos = str_contain_str(cmd, "$PID:RST!"), pos)
+    {
+        handled = 1U;
+        SPEED_PidReset();
+        printf("PID reset ok\r\n");
+        app_uart_print_pid();
+        uart_reply_ok("PID RST");
+    }
+    else if (pos = str_contain_str(cmd, "$PID:"), pos)
+    {
+        float kp = 0.0f, ki = 0.0f, kd = 0.0f;
+        handled = 1U;
+        if (parse_float_list3_command(cmd, "$PID:", &kp, &ki, &kd))
+        {
+            SPEED_PidSetParam(kp, ki, kd);
+            printf("PID set ok\r\n");
+            app_uart_print_pid();
+            uart_reply_ok("PID SET");
+        }
+        else
+        {
+            uart_reply_err("PID format");
+        }
+    }
+    else if (pos = str_contain_str(cmd, "$ULTRA:GET!"), pos)
+    {
+        handled = 1U;
+        (void)app_sensor_refresh_ultrasonic_distance();
+        app_uart_print_ultrasonic_status();
+        uart_reply_ok("ULTRA GET");
+    }
+    else if (pos = str_contain_str(cmd, "$TRACK:GET!"), pos)
+    {
+        handled = 1U;
+        app_uart_print_tracking_status();
+        uart_reply_ok("TRACK GET");
+    }
+    else if (pos = str_contain_str(cmd, "$LOG:GET!"), pos)
+    {
+        handled = 1U;
+        app_uart_print_log_config();
+        uart_reply_ok("LOG GET");
+    }
+    else if (pos = str_contain_str(cmd, "$LOG:MOTOR:"), pos)
+    {
+        handled = 1U;
+        if (sscanf((char *)cmd, "$LOG:MOTOR:%d,%d!", &int1, &int4) == 2)
+        {
+            app_uart_set_motor_log((uint8_t)int1, (uint32_t)int4);
+            app_uart_print_log_config();
+            uart_reply_ok("LOG MOTOR");
+        }
+        else if (sscanf((char *)cmd, "$LOG:MOTOR:%d!", &int1) == 1)
+        {
+            app_uart_set_motor_log((uint8_t)int1, app_uart_get_motor_log_period_ms());
+            app_uart_print_log_config();
+            uart_reply_ok("LOG MOTOR");
+        }
+        else
+        {
+            uart_reply_err("LOG MOTOR format");
+        }
+    }
+    else if (pos = str_contain_str(cmd, "$LOG:ULTRA:"), pos)
+    {
+        handled = 1U;
+        if (sscanf((char *)cmd, "$LOG:ULTRA:%d,%d!", &int1, &int4) == 2)
+        {
+            app_uart_set_ultrasonic_log((uint8_t)int1, (uint32_t)int4);
+            app_uart_print_log_config();
+            uart_reply_ok("LOG ULTRA");
+        }
+        else if (sscanf((char *)cmd, "$LOG:ULTRA:%d!", &int1) == 1)
+        {
+            app_uart_set_ultrasonic_log((uint8_t)int1, app_uart_get_ultrasonic_log_period_ms());
+            app_uart_print_log_config();
+            uart_reply_ok("LOG ULTRA");
+        }
+        else
+        {
+            uart_reply_err("LOG ULTRA format");
+        }
+    }
+    else if (pos = str_contain_str(cmd, "$MOTOR:STOP!"), pos)
+    {
+        handled = 1U;
+        debug_stop_all_motion();
+        printf("MOTOR stop ok\r\n");
+        app_uart_print_status();
+        uart_reply_ok("MOTOR STOP");
+    }
+    else if (pos = str_contain_str(cmd, "$MOTOR:CL:"), pos)
+    {
+        handled = 1U;
+        if (sscanf((char *)cmd, "$MOTOR:CL:%d!", &int1) == 1)
+        {
+            app_motor_set_closed_loop((uint8_t)int1);
+            if (int1 == 0)
+            {
+                app_motor_run();
+            }
+            app_uart_print_status();
+            uart_reply_ok("MOTOR CL");
+        }
+        else
+        {
+            uart_reply_err("MOTOR CL format");
+        }
+    }
+    else if (pos = str_contain_str(cmd, "$MOTOR:SET:"), pos)
+    {
+        float a = 0.0f, b = 0.0f, c = 0.0f, d = 0.0f;
+        handled = 1U;
+        if (parse_float_list4_command(cmd, "$MOTOR:SET:", &a, &b, &c, &d))
+        {
+            debug_set_manual_speed(a, b, c, d, 0U);
+            printf("MOTOR target set ok\r\n");
+            app_uart_print_status();
+            uart_reply_ok("MOTOR SET");
+        }
+        else
+        {
+            uart_reply_err("MOTOR SET format");
+        }
+    }
+    else if (pos = str_contain_str(cmd, "$MOTOR:RUN:"), pos)
+    {
+        float a = 0.0f, b = 0.0f, c = 0.0f, d = 0.0f;
+        handled = 1U;
+        if (parse_float_list4_command(cmd, "$MOTOR:RUN:", &a, &b, &c, &d))
+        {
+            debug_set_manual_speed(a, b, c, d, 1U);
+            printf("MOTOR run ok\r\n");
+            app_uart_print_status();
+            uart_reply_ok("MOTOR RUN");
+        }
+        else
+        {
+            uart_reply_err("MOTOR RUN format");
+        }
+    }
+    else if (pos = str_contain_str(cmd, "$AI:STOP!"), pos)
+    {
+        handled = 1U;
+        debug_stop_all_motion();
+        printf("AI stop ok\r\n");
+        app_uart_print_status();
+        uart_reply_ok("AI STOP");
+    }
+    else if (pos = str_contain_str(cmd, "$AI:TRACKPRO!"), pos)
+    {
+        handled = 1U;
+        debug_enter_ai_mode(1U, 1U);
+        printf("AI mode=TRACKPRO\r\n");
+        app_uart_print_status();
+        uart_reply_ok("AI TRACKPRO");
+    }
+    else if (pos = str_contain_str(cmd, "$AI:TRACK!"), pos)
+    {
+        handled = 1U;
+        debug_enter_ai_mode(1U, 0U);
+        printf("AI mode=TRACK\r\n");
+        app_uart_print_status();
+        uart_reply_ok("AI TRACK");
+    }
+    else if (pos = str_contain_str(cmd, "$AI:AVOID!"), pos)
+    {
+        handled = 1U;
+        debug_enter_ai_mode(2U, 0U);
+        motor_speed_set(0.3f, 0.3f, 0.3f, 0.3f);
+        printf("AI mode=AVOID\r\n");
+        app_uart_print_status();
+        uart_reply_ok("AI AVOID");
+    }
+    else if (pos = str_contain_str(cmd, "$AI:FOLLOW!"), pos)
+    {
+        handled = 1U;
+        debug_enter_ai_mode(3U, 0U);
+        printf("AI mode=FOLLOW\r\n");
+        app_uart_print_status();
+        uart_reply_ok("AI FOLLOW");
     }
     else if (pos = str_contain_str(cmd, "$DST!"), pos)
     {
+        handled = 1U;
         group_do_ok = 1;
         pwmServo_stop_motion(255);
         all_uart_send_str("#255PDST!");
-        motor_speed_set(0, 0, 0, 0);
-        AI_mode = 255;
+        debug_stop_all_motion();
+        uart_reply_ok("DST");
     }
     else if (pos = str_contain_str(cmd, "$DST:"), pos)
     {
+        handled = 1U;
         if (sscanf((char *)cmd, "$DST:%d!", &index))
         {
             pwmServo_stop_motion(index);
             sprintf((char *)cmd_return, "#%03dPDST!\r\n", (int)index);
             all_uart_send_str(cmd_return);
             memset(cmd_return, 0, sizeof(cmd_return));
+            uart_reply_ok("DST servo");
+        }
+        else
+        {
+            uart_reply_err("DST format");
         }
     }
     else if (pos = str_contain_str(cmd, "$RST!"), pos)
     {
+        handled = 1U;
+        uart_reply_ok("RST");
         soft_reset();
     }
     else if (pos = str_contain_str(cmd, "$DGS:"), pos)
     {
+        handled = 1U;
         if (sscanf((char *)cmd, "$DGS:%d!", &int1))
         {
             group_do_ok = 1;
             do_group_once(int1);
+            uart_reply_ok("DGS");
+        }
+        else
+        {
+            uart_reply_err("DGS format");
         }
     }
     else if (pos = str_contain_str(cmd, "$DGT:"), pos)
     {
+        handled = 1U;
         if (sscanf((char *)cmd, "$DGT:%d-%d,%d!", &group_num_start, &group_num_end, &group_num_cnt))
         {
             group_do_ok = 1;
@@ -428,85 +878,119 @@ void parse_cmd(char *cmd)
             {
                 do_group_once(group_num_start);
             }
+            uart_reply_ok("DGT");
+        }
+        else
+        {
+            uart_reply_err("DGT format");
         }
     }
     else if (pos = str_contain_str(cmd, "$DJR!"), pos)
     {
+        handled = 1U;
         all_uart_send_str("#255P1500T2000!");
-        motor_speed_set(0, 0, 0, 0);
+        debug_stop_all_motion();
         pwmServo_angle_set(255, 1500, 2000);
-        AI_mode = 255;
+        uart_reply_ok("DJR");
     }
     else if (pos = str_contain_str(cmd, "$Car:"), pos)
     {
 				uart2_send_str("cmdOk");
         /* 小车运动参数 */
         float a = 0, b = 0, c = 0, d = 0;
-        if (sscanf((char *)cmd, "$Car:%f,%f,%f,%f!", &a, &b, &c, &d))
+        handled = 1U;
+                if (parse_float_list4_command(cmd, "$Car:", &a, &b, &c, &d))
         {
-            motor_speed_set(a, b, c, d);
+            debug_set_manual_speed(a, b, c, d, 1U);
+            uart_reply_ok("CAR");
+        }
+        else
+        {
+            uart_reply_err("CAR format");
         }
     }
     else if (pos = str_contain_str(cmd, "$ZNXJ!"), pos)
     {
+        handled = 1U;
         /* 智能循迹模式 */
-        AI_mode = 1;
+        debug_enter_ai_mode(1U, 0U);
         forbid_turn = 0;
+        uart_reply_ok("ZNXJ");
     }
     else if (pos = str_contain_str(cmd, "$ZYBZ!"), pos)
     {
+        handled = 1U;
         // 自由避障
-        AI_mode = 2;
+        debug_enter_ai_mode(2U, 0U);
         // 前进
         motor_speed_set(0.3, 0.3, 0.3, 0.3);
+        uart_reply_ok("ZYBZ");
     }
     else if (pos = str_contain_str(cmd, "$DJGS!"), pos)
     {
+        handled = 1U;
         // 定距跟随
-        AI_mode = 3;
+        debug_enter_ai_mode(3U, 0U);
+        uart_reply_ok("DJGS");
     }
     else if (pos = str_contain_str(cmd, "$QJ!"), pos)
     {
+        handled = 1U;
         // 前进
-        motor_speed_set(0.3, 0.3, 0.3, 0.3);
+        debug_set_manual_speed(0.3f, 0.3f, 0.3f, 0.3f, 1U);
+        uart_reply_ok("QJ");
     }
     else if (pos = str_contain_str(cmd, "$HT!"), pos)
     {
+        handled = 1U;
         // 后退
-        motor_speed_set(-0.3, -0.3, -0.3, -0.3);
+        debug_set_manual_speed(-0.3f, -0.3f, -0.3f, -0.3f, 1U);
+        uart_reply_ok("HT");
     }
     else if (pos = str_contain_str(cmd, "$ZZ!"), pos)
     {
+        handled = 1U;
         // 左转
-        motor_speed_set(-0.3, 0.3, -0.3, 0.3);
+        debug_set_manual_speed(-0.3f, 0.3f, -0.3f, 0.3f, 1U);
+        uart_reply_ok("ZZ");
     }
     else if (pos = str_contain_str(cmd, "$YZ!"), pos)
     {
+        handled = 1U;
         // 右转
-        motor_speed_set(0.3, -0.3, 0.3, -0.3);
+        debug_set_manual_speed(0.3f, -0.3f, 0.3f, -0.3f, 1U);
+        uart_reply_ok("YZ");
     }
     else if (pos = str_contain_str(cmd, "$ZPY!"), pos)
     {
+        handled = 1U;
         // 左平移
-        motor_speed_set(-0.3, 0.3, 0.3, -0.3);
+        debug_set_manual_speed(-0.3f, 0.3f, 0.3f, -0.3f, 1U);
+        uart_reply_ok("ZPY");
     }
     else if (pos = str_contain_str(cmd, "$YPY!"), pos)
     {
+        handled = 1U;
         // 右平移
-        motor_speed_set(0.3, -0.3, -0.3, 0.3);
+        debug_set_manual_speed(0.3f, -0.3f, -0.3f, 0.3f, 1U);
+        uart_reply_ok("YPY");
     }
     else if (pos = str_contain_str(cmd, "$TZ!"), pos)
     {
+        handled = 1U;
         // 停止
-        motor_speed_set(0, 0, 0, 0);
-        AI_mode = 255;
+        debug_stop_all_motion();
+        uart_reply_ok("TZ");
     }
     else if (pos = str_contain_str(cmd, "$GETA!"), pos)
     {
+        handled = 1U;
         uart1_send_str("AAA");
+        uart_reply_ok("GETA");
     }
     else if (pos = str_contain_str(cmd, "$SMART_STOP!"), pos)
     {
+        handled = 1U;
         mdelay(10);
         parse_action("#255PDST!");
         mdelay(10);
@@ -514,26 +998,37 @@ void parse_cmd(char *cmd)
         mdelay(10);
         uart1_send_str("@OK!");
         mdelay(10);
+        uart_reply_ok("SMART STOP");
     }
     else if (pos = str_contain_str(cmd, "$KMS:"), pos)
     {
-        if (sscanf((char *)cmd, "$KMS:%f,%f,%f,%d!", &kinematics_x, &kinematics_y, &kinematics_z, &int4))
+        handled = 1U;
+        if (parse_kms_command(cmd, &kinematics_x, &kinematics_y, &kinematics_z, &int4))
         {
             // uart1_send_str("Try to find best pos:\r\n");
             if (kinematics_move(kinematics_x, kinematics_y, kinematics_z, int4))
             {
+                uart_reply_ok("KMS");
             }
             else
             {
                 uart1_send_str("Can't find best pos!!!");
+                uart_reply_err("KMS no solution");
             }
+        }
+        else
+        {
+            uart_reply_err("KMS format");
         }
     }
     else if (pos = str_contain_str(cmd, "$CarLineWalk!"), pos)
     {
+        handled = 1U;
+        uart_reply_ok("CarLineWalk");
     }
     else if (pos = str_contain_str(cmd, "$MV"), pos)
     {
+        handled = 1U;
         if (sscanf((char *)cmd, "$MV%d!", &mode_num))
         {
             oled_mode = 1;
@@ -596,11 +1091,23 @@ void parse_cmd(char *cmd)
                     OLED_P16x16Ch(x, 3, i, display_chars);
                 }
             }
+            uart_reply_ok("MV");
+        }
+        else
+        {
+            uart_reply_err("MV format");
         }
     }
     else if (pos = str_contain_str(cmd, "$RunStop!"), pos)
     {
+        handled = 1U;
         oled_mode = 0;
+        uart_reply_ok("RunStop");
+    }
+
+    if (!handled)
+    {
+        uart_reply_err("unknown command");
     }
 }
 

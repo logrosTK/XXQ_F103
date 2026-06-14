@@ -2,37 +2,17 @@
 #ifndef __Y_TRACKING_H
 #define __Y_TRACKING_H
 
-/* Includes ------------------------------------------------------------------*/
-#include "user_main.h"
+#include <stdint.h>
 
-/*******传感器IO口映射表*******/
-/* 循迹引脚读取，从右数1-》4 */
+#define TRACKING_CHANNEL_COUNT 8U
 
-#define TRTACK_IR4_X1_PIN  GPIO_Pin_8
-#define TRTACK_IR4_X1_PORT GPIOB                 /* GPIO端口 */
-#define TRTACK_IR4_X1_CLK  RCC_APB2Periph_GPIOB  /* GPIO端口时钟 */
-
-#define TRTACK_IR4_X2_PIN GPIO_Pin_9
-#define TRTACK_IR4_X2_PORT GPIOB                /* GPIO端口 */
-#define TRTACK_IR4_X2_CLK RCC_APB2Periph_GPIOB  /* GPIO端口时钟 */
-
-#define TRTACK_IR4_X3_PIN GPIO_Pin_5
-#define TRTACK_IR4_X3_PORT GPIOB                /* GPIO端口 */
-#define TRTACK_IR4_X3_CLK RCC_APB2Periph_GPIOB  /* GPIO端口时钟 */
-
-#define TRTACK_IR4_X4_PIN GPIO_Pin_4
-#define TRTACK_IR4_X4_PORT GPIOB               /* GPIO端口 */
-#define TRTACK_IR4_X4_CLK RCC_APB2Periph_GPIOB  /* GPIO端口时钟 */
-
-/*******快捷指令表*******/
-#define TRTACK_IR4_X1_READ() GPIO_ReadInputDataBit(TRTACK_IR4_X1_PORT,TRTACK_IR4_X1_PIN)
-#define TRTACK_IR4_X2_READ() GPIO_ReadInputDataBit(TRTACK_IR4_X2_PORT,TRTACK_IR4_X2_PIN)
-#define TRTACK_IR4_X3_READ() GPIO_ReadInputDataBit(TRTACK_IR4_X3_PORT,TRTACK_IR4_X3_PIN)
-#define TRTACK_IR4_X4_READ() GPIO_ReadInputDataBit(TRTACK_IR4_X4_PORT,TRTACK_IR4_X4_PIN)
-
-void TRACK_IR4_Init(void);
+void tracking_init(void);
+void tracking_run(void);
+void tracking_uart_rx_byte(uint8_t rx_byte);
+uint8_t tracking_is_data_valid(void);
+uint8_t tracking_is_online(void);
+uint8_t tracking_copy_digital(uint8_t *buffer, uint8_t buffer_len);
+uint8_t tracking_get_digital_mask(void);
 
 #endif
-
-/******************* (C) 版权 2022 XTARK **************************************/
 

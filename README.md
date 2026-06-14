@@ -28,7 +28,7 @@
 | C | 右后轮 |
 | D | 左后轮 |
 
-### 串口日志
+### 串口调试
 
 调试串口：
 
@@ -36,16 +36,36 @@
 - TX: `PA9`
 - RX: `PA10`
 
-开启闭环后，会周期输出电机闭环状态：
+说明：板载 CH340 USB 转串口连接到 USART1，也就是用户通过 USB 线接电脑后看到的调试串口。
+USART3(PB10/PB11) 已保留给八路循迹模块，不作为用户 USB 命令口使用。
+
+上电后可直接发送：
+
+```text
+$HELP!
+```
+
+查询完整命令表。
+
+默认调试行为：
+
+- 电机闭环日志默认开启，周期 `3000 ms`
+- 超声波周期日志默认关闭，但距离缓存仍会后台刷新
+- 日志周期可运行时通过串口命令修改，无需重新编译
+
+开启闭环且电机日志使能后，会周期输出电机闭环状态：
 
 ```text
 CL t=... target[A,B,C,D]=[...] speed[A,B,C,D]=[...] pwm[A,B,C,D]=[...]
 ```
 
-日志周期在 `User/app_main.c` 中设置：
+常用日志控制命令：
 
-```c
-#define MOTOR_STATUS_PERIOD_MS 3000U
+```text
+$LOG:GET!
+$LOG:MOTOR:1,1000!
+$LOG:ULTRA:1,500!
+$LOG:ULTRA:0!
 ```
 
 ### 编译
@@ -193,38 +213,106 @@ void SPEED_PidResetC(void);
 void SPEED_PidResetD(void);
 ```
 
-### UART 电机命令
+### UART 调试命令
 
 串口命令解析在 `User/Components/y_global/y_global.c`。
 
-四轮目标速度命令：
+#### 新增调试命令
+
+| 命令 | 作用 | 说明 |
+| --- | --- | --- |
+| `$HELP!` | 输出命令总览 | 上电后建议先发一次 |
+| `$STATUS!` | 输出完整系统状态 | 包含闭环、AI 模式、PID、四轮目标/实测/PWM、超声波、循迹 |
+| `$PID:GET!` | 读取 PID 参数 | 输出 `kp/ki/kd` |
+| `$PID:RST!` | 复位 PID 状态 | 清积分和历史误差 |
+| `$PID:kp,ki,kd!` | 设置 PID 参数 | 例：`$PID:800,35,400!` |
+| `$ULTRA:GET!` | 立即刷新并输出超声波距离 | 输出厘米值或失败状态 |
+| `$TRACK:GET!` | 输出循迹状态 | 包含在线状态、模式、mask、8 路数据、十字计数 |
+| `$LOG:GET!` | 输出当前日志配置 | 查看电机/超声波日志开关和周期 |
+| `$LOG:MOTOR:en,period!` | 配置电机日志 | `en=0/1`，`period` 单位 ms |
+| `$LOG:ULTRA:en,period!` | 配置超声波日志 | `en=0/1`，`period` 单位 ms |
+| `$MOTOR:CL:x!` | 设置闭环开关 | `x=0/1` |
+| `$MOTOR:SET:a,b,c,d!` | 仅设置四轮目标速度 | 不主动打开闭环 |
+| `$MOTOR:RUN:a,b,c,d!` | 设置四轮目标速度并打开闭环 | 最常用的直驱调试命令 |
+| `$MOTOR:STOP!` | 停车并关闭闭环 | 会立即执行一次停止输出 |
+| `$AI:STOP!` | 退出 AI 模式并停车 | 停止循迹/避障/跟随 |
+| `$AI:TRACK!` | 进入普通循迹模式 | 自动打开闭环 |
+| `$AI:TRACKPRO!` | 进入增强循迹模式 | 自动打开闭环 |
+| `$AI:AVOID!` | 进入自由避障模式 | 自动打开闭环 |
+| `$AI:FOLLOW!` | 进入定距跟随模式 | 自动打开闭环 |
+
+#### 已兼容的旧运动命令
+
+这些旧命令现在也会自动处理电机闭环，不再需要额外手动调用 `app_motor_set_closed_loop(1)`：
+
+| 命令 | 作用 |
+| --- | --- |
+| `$Car:a,b,c,d!` | 设置四轮目标速度并自动打开闭环 |
+| `$DST!` | 全部停止，关闭闭环，并停止所有舵机 |
+| `$ZNXJ!` | 普通智能循迹 |
+| `$ZYBZ!` | 自由避障 |
+| `$DJGS!` | 定距跟随 |
+| `$QJ!` | 前进 |
+| `$HT!` | 后退 |
+| `$ZZ!` | 左转 |
+| `$YZ!` | 右转 |
+| `$ZPY!` | 左平移 |
+| `$YPY!` | 右平移 |
+| `$TZ!` | 停止并关闭闭环 |
+
+#### 已保留的原有系统/舵机/动作组命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `$DST:x!` | 停止指定舵机 |
+| `$RST!` | 软件复位 STM32 |
+| `$DGS:x!` | 执行第 `x` 个动作组一次 |
+| `$DGT:x-y,z!` | 执行 `x` 到 `y` 号动作组，共 `z` 次 |
+| `$DJR!` | 所有舵机回中位，并停车 |
+| `$GETA!` | 返回应答 `AAA` |
+| `$DRS!` | 返回测试字符串 |
+| `$SMART_STOP!` | 执行原有智能停止流程 |
+| `$KMS:x,y,z,time!` | 机械臂逆运动学定位 |
+| `$MVx!` | OLED 功能页显示切换 |
+| `$RunStop!` | 退出 OLED 功能显示 |
+| `#xxxPyyyyTzzzz!` | 单舵机调试命令 |
+| `#xxxPSCK+bbb!` / `#xxxPSCK-bbb!` | 舵机偏置校准 |
+| `#xxxPDST!` | 停止指定舵机 |
+| `{#...!#...!}` | 多舵机联动调试 |
+| `<$!` | 清除开机预执行命令 |
+| `<$...!>` | 设置开机预执行命令 |
+| `<Gxxxx#...!>` | 保存动作组到 Flash |
+
+#### 常用调试示例
+
+启动四轮闭环并以 `0.10 m/s` 前进：
 
 ```text
-$Car:a,b,c,d!
+$MOTOR:RUN:0.10,0.10,0.10,0.10!
 ```
 
-示例：
+查看完整系统状态：
 
 ```text
-$Car:0.10,0.10,0.10,0.10!
+$STATUS!
 ```
 
-该命令会调用：
-
-```c
-motor_speed_set(a, b, c, d);
-```
-
-注意：当前 `$Car` 命令只更新目标速度，不自动开启闭环。闭环需要在固件中调用：
-
-```c
-app_motor_set_closed_loop(1);
-```
-
-停止命令：
+把电机日志改为每 `1000 ms` 输出一次：
 
 ```text
-$DST!
+$LOG:MOTOR:1,1000!
+```
+
+开启增强循迹：
+
+```text
+$AI:TRACKPRO!
+```
+
+兼容旧协议前进：
+
+```text
+$QJ!
 ```
 
 ### 应该在哪里写自己的电机控制逻辑
@@ -287,7 +375,7 @@ The project follows a STM32CubeMX/HAL layout. User code is mainly under `User/`.
 | C | Right rear |
 | D | Left rear |
 
-### UART Log
+### UART Debug
 
 Debug UART:
 
@@ -295,16 +383,36 @@ Debug UART:
 - TX: `PA9`
 - RX: `PA10`
 
-When closed-loop control is enabled, the firmware periodically prints:
+Note: the onboard CH340 USB-to-UART bridge is wired to USART1, which is the user-facing USB serial port on the PC side.
+USART3 (PB10/PB11) is reserved for the 8-channel tracking module and is not used as the user USB command port.
+
+After boot, send:
+
+```text
+$HELP!
+```
+
+to print the full UART debug command list.
+
+Default debug behavior:
+
+- Motor closed-loop log is enabled by default with a `3000 ms` period
+- Periodic ultrasonic log is disabled by default, but the cached distance still refreshes in the background
+- Log periods can be changed at runtime over UART
+
+When closed-loop control and motor logging are enabled, the firmware periodically prints:
 
 ```text
 CL t=... target[A,B,C,D]=[...] speed[A,B,C,D]=[...] pwm[A,B,C,D]=[...]
 ```
 
-The log period is configured in `User/app_main.c`:
+Typical log control commands:
 
-```c
-#define MOTOR_STATUS_PERIOD_MS 3000U
+```text
+$LOG:GET!
+$LOG:MOTOR:1,1000!
+$LOG:ULTRA:1,500!
+$LOG:ULTRA:0!
 ```
 
 ### Build
@@ -452,38 +560,106 @@ void SPEED_PidResetC(void);
 void SPEED_PidResetD(void);
 ```
 
-### UART Motor Command
+### UART Debug Commands
 
 The UART command parser is implemented in `User/Components/y_global/y_global.c`.
 
-Four-wheel target speed command:
+#### New debug commands
+
+| Command | Function | Notes |
+| --- | --- | --- |
+| `$HELP!` | Print the command summary | Recommended first command after boot |
+| `$STATUS!` | Print full system status | Includes closed-loop, AI mode, PID, wheel target/real/PWM, ultrasonic, and tracking state |
+| `$PID:GET!` | Read PID parameters | Prints `kp/ki/kd` |
+| `$PID:RST!` | Reset PID state | Clears integral/history |
+| `$PID:kp,ki,kd!` | Update PID parameters | Example: `$PID:800,35,400!` |
+| `$ULTRA:GET!` | Refresh and print ultrasonic distance | Prints distance in cm or failure |
+| `$TRACK:GET!` | Print tracking status | Includes online state, mode, mask, 8-channel data, and cross counters |
+| `$LOG:GET!` | Print current log configuration | Shows motor/ultrasonic log switches and periods |
+| `$LOG:MOTOR:en,period!` | Configure motor log | `en=0/1`, `period` in ms |
+| `$LOG:ULTRA:en,period!` | Configure ultrasonic log | `en=0/1`, `period` in ms |
+| `$MOTOR:CL:x!` | Set closed-loop enable | `x=0/1` |
+| `$MOTOR:SET:a,b,c,d!` | Set target wheel speeds only | Does not force closed-loop on |
+| `$MOTOR:RUN:a,b,c,d!` | Set target wheel speeds and enable closed-loop | Best direct-drive debug command |
+| `$MOTOR:STOP!` | Stop motors and disable closed-loop | Forces one immediate stop update |
+| `$AI:STOP!` | Leave AI mode and stop | Stops tracking/avoid/follow modes |
+| `$AI:TRACK!` | Enter normal tracking mode | Automatically enables closed-loop |
+| `$AI:TRACKPRO!` | Enter aggressive tracking mode | Automatically enables closed-loop |
+| `$AI:AVOID!` | Enter obstacle-avoid mode | Automatically enables closed-loop |
+| `$AI:FOLLOW!` | Enter follow-distance mode | Automatically enables closed-loop |
+
+#### Legacy motion commands kept for compatibility
+
+These legacy commands now also manage motor closed-loop automatically, so no extra firmware-side `app_motor_set_closed_loop(1)` call is required.
+
+| Command | Function |
+| --- | --- |
+| `$Car:a,b,c,d!` | Set four-wheel target speeds and automatically enable closed-loop |
+| `$DST!` | Stop everything, disable closed-loop, and stop all servos |
+| `$ZNXJ!` | Normal tracking mode |
+| `$ZYBZ!` | Obstacle avoidance |
+| `$DJGS!` | Distance following |
+| `$QJ!` | Forward |
+| `$HT!` | Backward |
+| `$ZZ!` | Turn left |
+| `$YZ!` | Turn right |
+| `$ZPY!` | Translate left |
+| `$YPY!` | Translate right |
+| `$TZ!` | Stop and disable closed-loop |
+
+#### Existing system, servo, and action-group commands still supported
+
+| Command | Function |
+| --- | --- |
+| `$DST:x!` | Stop a specific servo |
+| `$RST!` | Software-reset the STM32 |
+| `$DGS:x!` | Run action group `x` once |
+| `$DGT:x-y,z!` | Run action groups `x` through `y`, `z` times |
+| `$DJR!` | Recenter all servos and stop motors |
+| `$GETA!` | Return `AAA` |
+| `$DRS!` | Return the test string |
+| `$SMART_STOP!` | Execute the original smart-stop flow |
+| `$KMS:x,y,z,time!` | Inverse-kinematics positioning command |
+| `$MVx!` | Switch OLED function page |
+| `$RunStop!` | Leave OLED function display mode |
+| `#xxxPyyyyTzzzz!` | Single-servo debug command |
+| `#xxxPSCK+bbb!` / `#xxxPSCK-bbb!` | Servo bias calibration |
+| `#xxxPDST!` | Stop a specific servo |
+| `{#...!#...!}` | Multi-servo joint debug command |
+| `<$!` | Clear power-on pre-command |
+| `<$...!>` | Set power-on pre-command |
+| `<Gxxxx#...!>` | Save an action group to Flash |
+
+#### Typical examples
+
+Start four-wheel closed-loop driving at `0.10 m/s`:
 
 ```text
-$Car:a,b,c,d!
+$MOTOR:RUN:0.10,0.10,0.10,0.10!
 ```
 
-Example:
+Query the full system status:
 
 ```text
-$Car:0.10,0.10,0.10,0.10!
+$STATUS!
 ```
 
-This command calls:
-
-```c
-motor_speed_set(a, b, c, d);
-```
-
-Important: the current `$Car` command updates target speeds only. It does not automatically enable closed-loop control. Closed loop must be enabled in firmware with:
-
-```c
-app_motor_set_closed_loop(1);
-```
-
-Stop command:
+Change motor log period to `1000 ms`:
 
 ```text
-$DST!
+$LOG:MOTOR:1,1000!
+```
+
+Enter aggressive tracking mode:
+
+```text
+$AI:TRACKPRO!
+```
+
+Forward using the legacy protocol:
+
+```text
+$QJ!
 ```
 
 ### Where To Add Your Own Motor Control

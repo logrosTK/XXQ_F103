@@ -134,7 +134,7 @@ void uart3_init(u32 baud)
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, ENABLE);
 
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_OD;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_Init(GPIOB, &GPIO_InitStructure);
 
@@ -445,67 +445,16 @@ void USART2_IRQHandler(void)
  ***********************************************/
 void USART3_IRQHandler(void)
 {
-	static u16 buf_index = 0;
-
 	// 先判断标志位
 	if (USART_GetITStatus(USART3, USART_IT_RXNE) == SET)
 	{
 		// 接收数据
 		uint8_t rx_data = USART_ReceiveData(USART3);
 
-		if (uart3_get_ok)
-			return;
-
-		if (uart3_mode == 0)
-		{
-			if (rx_data == '$')
-			{
-				// 命令模式 $XXX!
-				uart3_mode = 1;
-			}
-			else if (rx_data == '#')
-			{
-				// 单舵机模式	#000P1500T1000! 类似这种命令
-				uart3_mode = 2;
-			}
-			else if (rx_data == '{')
-			{
-				// 多舵机模式	{#000P1500T1000!#001P1500T1000!} 多个单舵机命令用大括号括起来
-				uart3_mode = 3;
-			}
-			else if (rx_data == '<')
-			{
-				// 保存动作组模式	<G0000#000P1500T1000!#001P1500T1000!B000!> 用尖括号括起来 带有组序号
-				uart3_mode = 4;
-			}
-			buf_index = 0;
-		}
-
-		uart3_receive_buf[buf_index++] = rx_data;
-
-		if ((uart3_mode == 1) && (rx_data == '!'))
-		{
-			uart3_receive_buf[buf_index] = '\0';
-			uart3_get_ok = 1;
-		}
-		else if ((uart3_mode == 2) && (rx_data == '!'))
-		{
-			uart3_receive_buf[buf_index] = '\0';
-			uart3_get_ok = 1;
-		}
-		else if ((uart3_mode == 3) && (rx_data == '}'))
-		{
-			uart3_receive_buf[buf_index] = '\0';
-			uart3_get_ok = 1;
-		}
-		else if ((uart3_mode == 4) && (rx_data == '>'))
-		{
-			uart3_receive_buf[buf_index] = '\0';
-			uart3_get_ok = 1;
-		}
-
-		if (buf_index >= UART_BUF_SIZE)
-			buf_index = 0;
+		/* USART3 is dedicated to the tracking module. Do not feed the generic
+		 * command parser here, otherwise $D...# tracking frames collide with
+		 * the $...! command framing used by the debug UART. */
+		tracking_uart_rx_byte(rx_data);
 
 		// 手动清除标志位
 		USART_ClearITPendingBit(USART3, USART_IT_RXNE);
