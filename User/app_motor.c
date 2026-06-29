@@ -1,9 +1,9 @@
 #include "app_motor.h"
 
-#define MOTOR_A_ENCODER_SIGN (1.0f)
+#define MOTOR_A_ENCODER_SIGN (-1.0f)
 #define MOTOR_B_ENCODER_SIGN (1.0f)
 #define MOTOR_C_ENCODER_SIGN (1.0f)
-#define MOTOR_D_ENCODER_SIGN (1.0f)
+#define MOTOR_D_ENCODER_SIGN (-1.0f)
 
 static volatile uint8_t motor_closed_loop_enabled;
 
@@ -101,7 +101,7 @@ void app_motor_run(void)
     }
     else
     {
-        Wheel_C.PWM = SPEED_PidCtlC(-Wheel_C.TG, Wheel_C.RT);
+        Wheel_C.PWM = SPEED_PidCtlC(Wheel_C.TG, Wheel_C.RT);
     }
 
     if (Wheel_D.TG == 0.0f)
@@ -114,8 +114,8 @@ void app_motor_run(void)
         Wheel_D.PWM = SPEED_PidCtlD(Wheel_D.TG, Wheel_D.RT);
     }
 
-    MOTOR_A_SetSpeed(Wheel_A.PWM);
-    MOTOR_B_SetSpeed(-Wheel_B.PWM);
-    MOTOR_C_SetSpeed(-Wheel_C.PWM);
+    MOTOR_A_SetSpeed(-Wheel_A.PWM);
+    MOTOR_B_SetSpeed(Wheel_B.PWM);
+    MOTOR_C_SetSpeed(Wheel_C.PWM);
     MOTOR_D_SetSpeed(-Wheel_D.PWM);
 }

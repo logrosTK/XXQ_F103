@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 38px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 18px; fill: #596579; }
+      .sec-title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 22px; font-weight: 700; fill: #172033; }
+      .box-title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 22px; font-weight: 700; fill: #172033; }
+      .small-title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 17px; font-weight: 700; fill: #1f2a3d; }
+      .text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 16px; fill: #2c3648; }
+      .tiny { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 14px; fill: #465166; }
+      .code { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 15px; fill: #243044; }
+      .pill { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 14px; font-weight: 700; fill: #fff; }
+      .card { fill: #fff; stroke: #d8e0ea; stroke-width: 1.2; rx: 10; }
+      .green { fill: #eef8ef; stroke: #8cc78e; }
+      .blue { fill: #eef5ff; stroke: #82aeea; }
+      .purple { fill: #f5effb; stroke: #b799d7; }
+      .yellow { fill: #fff8e6; stroke: #e2bf63; }
+      .red { fill: #fff1f0; stroke: #e3a2a0; }
+      .cyan { fill: #edf9fb; stroke: #7dc7d4; }
+      .line { stroke: #627086; stroke-width: 2.4; fill: none; }
+      .dash { stroke: #8a95a6; stroke-width: 2; stroke-dasharray: 6 7; fill: none; }
+      .thin { stroke: #d4dbe4; stroke-width: 1; }
+      .ok { fill: #23a455; }
+      .warn { fill: #ed9b22; }
+      .info { fill: #2d7bdc; }
+      .dark { fill: #2c3648; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#627086"/>
+    </marker>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="116%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#101828" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect class="bg" width="1920" height="1080"/>
+  <text x="960" y="50" text-anchor="middle" class="title">STM32F103 智能小车软件设计方案与核心算法</text>
+  <text x="960" y="82" text-anchor="middle" class="subtitle">八路红外巡线、超声波避障/跟随、四轮编码器 PID 闭环、电机 PWM、串口调试与 OLED 状态显示</text>
+
+  <!-- Top architecture -->
+  <text x="54" y="125" class="sec-title">1. 系统架构</text>
+
+  <rect x="65" y="145" width="360" height="260" class="green card" filter="url(#shadow)"/>
+  <text x="245" y="178" text-anchor="middle" class="box-title">传感与命令输入</text>
+  <rect x="95" y="205" width="300" height="52" class="card"/>
+  <circle cx="120" cy="231" r="11" class="info"/>
+  <text x="142" y="225" class="small-title">八路红外巡线模块</text>
+  <text x="142" y="246" class="tiny">UART3，0=黑线，1=白底</text>
+  <rect x="95" y="272" width="300" height="52" class="card"/>
+  <circle cx="120" cy="298" r="11" class="ok"/>
+  <text x="142" y="292" class="small-title">超声波传感器</text>
+  <text x="142" y="313" class="tiny">软件 I2C 测距，RGB 状态灯</text>
+  <rect x="95" y="339" width="300" height="42" class="card"/>
+  <circle cx="120" cy="360" r="11" class="warn"/>
+  <text x="142" y="365" class="small-title">串口 / 手柄 / 动作组命令</text>
+
+  <rect x="540" y="125" width="455" height="300" class="blue card" filter="url(#shadow)"/>
+  <text x="768" y="160" text-anchor="middle" class="box-title">STM32F103 控制核心</text>
+  <text x="768" y="185" text-anchor="middle" class="tiny">main.c 调用 app_init()，主循环调用 app_loop()</text>
+  <rect x="585" y="215" width="365" height="44" class="card"/>
+  <text x="768" y="243" text-anchor="middle" class="small-title">app_uart_run：命令解析 / 参数调试</text>
+  <rect x="585" y="272" width="365" height="44" class="card"/>
+  <text x="768" y="300" text-anchor="middle" class="small-title">app_sensor_run：AI 模式状态机</text>
+  <rect x="585" y="329" width="365" height="44" class="card"/>
+  <text x="768" y="357" text-anchor="middle" class="small-title">app_motor_run：编码器 + PID + PWM</text>
+  <rect x="585" y="386" width="365" height="24" class="card"/>
+  <text x="768" y="404" text-anchor="middle" class="tiny">OLED、日志、LED 按周期非阻塞刷新</text>
+
+  <rect x="1110" y="145" width="360" height="260" class="purple card" filter="url(#shadow)"/>
+  <text x="1290" y="178" text-anchor="middle" class="box-title">执行与反馈输出</text>
+  <rect x="1140" y="205" width="300" height="52" class="card"/>
+  <circle cx="1165" cy="231" r="11" class="dark"/>
+  <text x="1187" y="225" class="small-title">四轮电机 PWM 驱动</text>
+  <text x="1187" y="246" class="tiny">TIM1/TIM8，A/B/C/D 四轮</text>
+  <rect x="1140" y="272" width="300" height="52" class="card"/>
+  <circle cx="1165" cy="298" r="11" class="info"/>
+  <text x="1187" y="292" class="small-title">舵机与机械臂</text>
+  <text x="1187" y="313" class="tiny">动作组与 KMS 逆运动学</text>
+  <rect x="1140" y="339" width="300" height="42" class="card"/>
+  <circle cx="1165" cy="360" r="11" class="ok"/>
+  <text x="1187" y="365" class="small-title">OLED / 蜂鸣器 / 串口日志</text>
+
+  <path d="M425 275 L532 275" class="line" marker-end="url(#arrow)"/>
+  <text x="478" y="257" text-anchor="middle" class="tiny">UART / I2C / IO</text>
+  <path d="M995 275 L1102 275" class="line" marker-end="url(#arrow)"/>
+  <text x="1048" y="257" text-anchor="middle" class="tiny">目标速度 / PWM</text>
+  <path d="M1290 405 C1290 468 770 468 770 428" class="dash" marker-end="url(#arrow)"/>
+  <text x="1038" y="459" text-anchor="middle" class="tiny">编码器速度反馈 RT</text>
+
+  <!-- Right workflow -->
+  <rect x="1510" y="125" width="355" height="300" class="card" filter="url(#shadow)"/>
+  <text x="1538" y="160" class="sec-title">2. 软件工作流程</text>
+  <circle cx="1546" cy="194" r="8" class="info"/><text x="1570" y="200" class="text">上电初始化</text>
+  <text x="1570" y="224" class="tiny">SysTick / UART / OLED / 电机 / 传感器</text>
+  <path d="M1546 207 L1546 238" class="line" marker-end="url(#arrow)"/>
+  <circle cx="1546" cy="255" r="8" class="info"/><text x="1570" y="261" class="text">主循环 app_loop()</text>
+  <text x="1570" y="285" class="tiny">UART → Sensor → LED → Debug → OLED</text>
+  <path d="M1546 268 L1546 299" class="line" marker-end="url(#arrow)"/>
+  <circle cx="1546" cy="316" r="8" class="info"/><text x="1570" y="322" class="text">1 ms 系统节拍</text>
+  <text x="1570" y="346" class="tiny">每 20 ms 触发一次电机 PID 闭环</text>
+  <path d="M1546 329 L1546 360" class="line" marker-end="url(#arrow)"/>
+  <circle cx="1546" cy="377" r="8" class="info"/><text x="1570" y="383" class="text">状态输出</text>
+  <text x="1570" y="407" class="tiny">OLED 页面、串口日志、蜂鸣器报警</text>
+
+  <!-- Data flow -->
+  <rect x="65" y="460" width="1800" height="125" class="yellow card" filter="url(#shadow)"/>
+  <text x="96" y="495" class="box-title">3. 底层硬件接口与数据流</text>
+  <g transform="translate(100 515)">
+    <rect x="0" y="0" width="285" height="48" class="card"/>
+    <text x="18" y="21" class="small-title">八路巡线 UART3</text>
+    <text x="18" y="40" class="tiny">$D,x1...x8# 解析黑线位置</text>
+    <path d="M300 24 L365 24" class="line" marker-end="url(#arrow)"/>
+
+    <rect x="380" y="0" width="290" height="48" class="card"/>
+    <text x="398" y="21" class="small-title">传感器融合决策</text>
+    <text x="398" y="40" class="tiny">巡线 / 避障 / 跟随状态机</text>
+    <path d="M685 24 L750 24" class="line" marker-end="url(#arrow)"/>
+
+    <rect x="765" y="0" width="290" height="48" class="card"/>
+    <text x="783" y="21" class="small-title">四轮目标速度 TG</text>
+    <text x="783" y="40" class="tiny">A/B/C/D，单位 m/s</text>
+    <path d="M1070 24 L1135 24" class="line" marker-end="url(#arrow)"/>
+
+    <rect x="1150" y="0" width="330" height="48" class="card"/>
+    <text x="1168" y="21" class="small-title">编码器反馈 + PID 闭环</text>
+    <text x="1168" y="40" class="tiny">TIM2/3/4/5 → RT → PWM 输出</text>
+  </g>
+  <text x="100" y="570" class="tiny">辅助接口：超声波软件 I2C 提供距离阈值；TIM1/TIM8 输出电机 PWM；UART1/2/5 支持命令、日志和动作组调试。</text>
+
+  <!-- Algorithms -->
+  <rect x="65" y="620" width="560" height="205" class="green card" filter="url(#shadow)"/>
+  <text x="96" y="655" class="sec-title">4. 巡线控制算法</text>
+  <text x="96" y="690" class="text">八路红外从左到右赋权：[-7,-5,-3,-1,1,3,5,7]</text>
+  <text x="96" y="720" class="code">error = Σ(weight_i × black_i) / Σ(black_i)</text>
+  <text x="96" y="750" class="code">left  = clamp(base + gain × error, 0, 0.32)</text>
+  <text x="96" y="780" class="code">right = clamp(base - gain × error, 0, 0.32)</text>
+  <text x="96" y="810" class="tiny">丢线时按 last_error 找线；黑点数 ≥ 6 时识别十字路口。</text>
+
+  <rect x="680" y="620" width="560" height="205" class="blue card" filter="url(#shadow)"/>
+  <text x="711" y="655" class="sec-title">5. 四轮 PID 速度闭环</text>
+  <text x="711" y="690" class="text">目标速度 TG 来自串口命令或 AI 模式，RT 来自编码器。</text>
+  <text x="711" y="720" class="code">e = TG - RT</text>
+  <text x="711" y="750" class="code">PWM = Kp×e + Ki×integral + Kd×(e-e_last)</text>
+  <text x="711" y="780" class="tiny">默认参数：Kp=800，Ki=35，Kd=400。</text>
+  <text x="711" y="810" class="tiny">积分限幅 ±40，PWM 限幅 ±2000，切换闭环时重置 PID。</text>
+
+  <rect x="1295" y="620" width="570" height="205" class="cyan card" filter="url(#shadow)"/>
+  <text x="1326" y="655" class="sec-title">6. 超声波状态机与机械臂算法</text>
+  <text x="1326" y="690" class="text">自由避障：d&lt;15 后退；15~35 左转；d≥35 前进。</text>
+  <text x="1326" y="720" class="text">定距跟随：d&gt;25 前进；20~25 停止；d&lt;20 后退。</text>
+  <text x="1326" y="750" class="text">机械臂 KMS：输入 x/y/z/time，遍历 Alpha 找可达解。</text>
+  <text x="1326" y="780" class="code">servo_pwm = 1500 ± 2000×angle/270</text>
+  <text x="1326" y="810" class="tiny">逆运动学检查 z、臂长、acos 参数和关节角范围。</text>
+
+  <!-- Bottom table -->
+  <rect x="65" y="860" width="1090" height="170" class="card" filter="url(#shadow)"/>
+  <text x="96" y="895" class="sec-title">7. 关键模块与接口对应</text>
+  <line x1="96" y1="913" x2="1124" y2="913" class="thin"/>
+  <text x="108" y="940" class="small-title">模块</text>
+  <text x="300" y="940" class="small-title">核心文件 / 函数</text>
+  <text x="650" y="940" class="small-title">作用</text>
+  <text x="930" y="940" class="small-title">节拍 / 接口</text>
+  <line x1="96" y1="954" x2="1124" y2="954" class="thin"/>
+  <text x="108" y="980" class="text">主控循环</text>
+  <text x="300" y="980" class="code">app_init / app_loop</text>
+  <text x="650" y="980" class="text">初始化与任务调度</text>
+  <text x="930" y="980" class="text">主循环</text>
+  <text x="108" y="1010" class="text">巡线采集</text>
+  <text x="300" y="1010" class="code">tracking_run / rx_byte</text>
+  <text x="650" y="1010" class="text">解析八路黑白状态</text>
+  <text x="930" y="1010" class="text">UART3</text>
+
+  <rect x="1200" y="860" width="665" height="170" class="red card" filter="url(#shadow)"/>
+  <text x="1231" y="895" class="sec-title">8. 汇报亮点</text>
+  <circle cx="1245" cy="930" r="9" class="ok"/><text x="1270" y="936" class="text">分层设计：应用层、算法层、驱动层边界清晰。</text>
+  <circle cx="1245" cy="965" r="9" class="ok"/><text x="1270" y="971" class="text">闭环控制：编码器反馈，四轮独立 PID 保持目标速度。</text>
+  <circle cx="1245" cy="1000" r="9" class="ok"/><text x="1270" y="1006" class="text">运行时可调：串口支持 PID、日志、电机和 AI 模式调试。</text>
+</svg>
